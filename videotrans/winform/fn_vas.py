@@ -319,11 +319,53 @@ def openwin():
 
         if type == 'video':
             winobj.ysphb_videoinput.setText(fname.replace('\\', '/'))
+            # 从视频中截取一帧用于预览
+            extract_video_frame(fname)
         if type == 'wav':
             winobj.ysphb_wavinput.setText(fname.replace('\\', '/'))
         if type == 'srt':
             winobj.ysphb_srtinput.setText(fname.replace('\\', '/'))
         config.params['last_opendir'] = os.path.dirname(fname)
+    
+    def extract_video_frame(video_path):
+        """从视频中截取一帧用于预览"""
+        try:
+            import time
+            from PySide6.QtGui import QPixmap
+            from PySide6.QtCore import Qt
+            
+            # 获取视频时长，截取中间位置的一帧
+            video_duration = tools.get_video_duration(video_path)
+            # 截取视频中间位置的帧（单位：秒）
+            seek_time = video_duration / 2000  # 视频中间位置
+            
+            # 生成临时文件路径
+            frame_path = config.TEMP_HOME + f"/video_frame_{time.time()}.jpg"
+            
+            # 使用ffmpeg截取视频帧
+            cmd = [
+                '-y',
+                '-ss', str(seek_time),
+                '-i', video_path,
+                '-vframes', '1',
+                '-q:v', '2',
+                frame_path
+            ]
+            tools.runffmpeg(cmd)
+            
+            # 如果截取成功，更新预览
+            if Path(frame_path).exists():
+                winobj.video_frame_path = frame_path
+                pixmap = QPixmap(frame_path)
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(winobj.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    winobj.preview_label.setPixmap(scaled_pixmap)
+                    winobj.preview_label.setText("")
+                    
+                    # 触发字幕预览更新
+                    winobj.update_subtitle_preview()
+        except Exception as e:
+            print(f"截取视频帧失败: {e}")
 
     def start():
         winobj.has_done = False

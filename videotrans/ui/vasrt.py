@@ -3,9 +3,9 @@
 from pathlib import Path
 
 from PySide6 import QtCore, QtWidgets
-from PySide6.QtCore import QMetaObject, Qt
-from PySide6.QtGui import QFont, QColor
-from PySide6.QtWidgets import QHBoxLayout, QFontDialog, QColorDialog
+from PySide6.QtCore import QMetaObject, Qt, QTimer
+from PySide6.QtGui import QFont, QColor, QPixmap
+from PySide6.QtWidgets import QHBoxLayout, QFontDialog, QColorDialog, QLabel
 
 from videotrans.configure import config
 
@@ -30,7 +30,38 @@ class Ui_vasrt(object):
         # start
         self.v3 = QtWidgets.QVBoxLayout()
         self.v3.setObjectName("v3")
+        
+        # 添加预览区域
+        self.preview_label = QLabel()
+        self.preview_label.setObjectName("preview_label")
+        self.preview_label.setMinimumSize(QtCore.QSize(640, 360))
+        self.preview_label.setMaximumSize(QtCore.QSize(640, 360))
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setStyleSheet("background-color: #1a1a1a; border: 1px solid #444;")
+        self.preview_label.setText("视频预览区域\n选择视频后将显示字幕效果" if config.defaulelang == 'zh' else "Video Preview Area\nSubtitle effect will be displayed after selecting video")
+        self.preview_label.setScaledContents(False)
+        self.video_frame_path = None  # 存储视频帧路径
+        
+        # 添加防抖定时器
+        self.preview_update_timer = QTimer()
+        self.preview_update_timer.setSingleShot(True)
+        self.preview_update_timer.timeout.connect(self._do_update_preview)
+        
+        # 添加刷新预览按钮
+        self.preview_layout = QtWidgets.QHBoxLayout()
+        self.refresh_preview_btn = QtWidgets.QPushButton()
+        self.refresh_preview_btn.setText("刷新预览" if config.defaulelang == 'zh' else "Refresh Preview")
+        self.refresh_preview_btn.setMinimumSize(QtCore.QSize(120, 30))
+        self.refresh_preview_btn.setCursor(Qt.PointingHandCursor)
+        self.refresh_preview_btn.clicked.connect(self._do_update_preview)  # 立即更新，不使用防抖
+        self.preview_layout.addStretch()
+        self.preview_layout.addWidget(self.refresh_preview_btn)
+        self.preview_layout.addStretch()
 
+        # 将预览区域添加到布局
+        self.v3.addWidget(self.preview_label)
+        self.v3.addLayout(self.preview_layout)
+        
         # h3
         self.h3 = QtWidgets.QHBoxLayout()
         self.h3.setObjectName("horizontalLayout_3")
@@ -292,6 +323,16 @@ class Ui_vasrt(object):
         self.horizontalLayout_3.addLayout(self.v3)
 
         self.retranslateUi(vasrt)
+        
+        # 连接所有字幕参数控件到预览更新
+        self.position.currentTextChanged.connect(lambda: self.update_subtitle_preview())
+        self.marginL.textChanged.connect(lambda: self.update_subtitle_preview())
+        self.marginV.textChanged.connect(lambda: self.update_subtitle_preview())
+        self.marginR.textChanged.connect(lambda: self.update_subtitle_preview())
+        self.outline.textChanged.connect(lambda: self.update_subtitle_preview())
+        self.shadow.textChanged.connect(lambda: self.update_subtitle_preview())
+        self.font_size_edit.textChanged.connect(lambda: self.update_subtitle_preview())
+        self.ysphb_borderstyle.toggled.connect(lambda: self.update_subtitle_preview())
 
         QMetaObject.connectSlotsByName(vasrt)
 
@@ -319,6 +360,7 @@ class Ui_vasrt(object):
             self.font_size_edit.setText(str(font_size))
             self.font_button.setText(font_name)
             self._setfont()
+            self.update_subtitle_preview()
 
     def _setfont(self):
         bgcolor_name = self.selected_backgroundcolor.name()
@@ -357,6 +399,7 @@ class Ui_vasrt(object):
         if color.isValid():
             self.selected_color = color
             self._setfont()
+            self.update_subtitle_preview()
 
     def choose_backgroundcolor(self):
         color = self.selected_backgroundcolor
@@ -370,6 +413,7 @@ class Ui_vasrt(object):
         if color.isValid():
             self.selected_backgroundcolor = color
             self._setfont()
+            self.update_subtitle_preview()
 
     def choose_bordercolor(self):
 
@@ -383,6 +427,7 @@ class Ui_vasrt(object):
         if color.isValid():
             self.selected_bordercolor = color
             self._setfont()
+            self.update_subtitle_preview()
 
     def remainraw(self, t):
         if Path(t).is_file():
@@ -401,6 +446,140 @@ class Ui_vasrt(object):
         self.color_button.setDisabled(True if state else False)
         self.backgroundcolor_button.setDisabled(True if state else False)
         self.bordercolor_button.setDisabled(True if state else False)
+        
+        # 更新预览
+        self.update_subtitle_preview()
+    
+    def update_subtitle_preview(self):
+        """更新字幕预览（使用防抖）"""
+        # 停止之前的定时器
+        self.preview_update_timer.stop()
+        # 延迟500毫秒后执行更新
+        self.preview_update_timer.start(500)
+    
+    def _do_update_preview(self):
+        """实际执行预览更新"""
+        if not self.video_frame_path or not Path(self.video_frame_path).exists():
+            return
+        
+        # 如果是软字幕，不显示预览效果
+        if self.ysphb_issoft.isChecked():
+            pixmap = QPixmap(self.video_frame_path)
+            if not pixmap.isNull():
+                scaled_pixmap = pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.preview_label.setPixmap(scaled_pixmap)
+            return
+            
+        try:
+            import time
+            from videotrans.util import tools
+            
+            # 创建临时字幕文件用于预览
+            preview_srt = config.TEMP_HOME + f"/preview_{time.time()}.srt"
+            preview_text = "1\n00:00:00,000 --> 00:00:05,000\n这是字幕预览效果\nSubtitle Preview Effect\n\n"
+            
+            with open(preview_srt, 'w', encoding='utf-8') as f:
+                f.write(preview_text)
+            
+            # 创建ASS文件
+            preview_ass = config.TEMP_HOME + f"/preview_{time.time()}.ass"
+            self._create_preview_ass(preview_srt, preview_ass)
+            
+            # 使用ffmpeg将字幕绘制到视频帧上
+            preview_output = config.TEMP_HOME + f"/preview_{time.time()}.jpg"
+            import os
+            os.chdir(config.TEMP_HOME)
+            
+            cmd = [
+                '-y',
+                '-i', self.video_frame_path,
+                '-vf', f"subtitles={os.path.basename(preview_ass)}:charenc=utf-8",
+                '-frames:v', '1',
+                preview_output
+            ]
+            tools.runffmpeg(cmd)
+            
+            # 显示预览图片
+            if Path(preview_output).exists():
+                pixmap = QPixmap(preview_output)
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self.preview_label.setPixmap(scaled_pixmap)
+                
+                # 清理临时文件
+                try:
+                    os.remove(preview_output)
+                except:
+                    pass
+            
+            # 清理临时字幕文件
+            try:
+                os.remove(preview_srt)
+                os.remove(preview_ass)
+            except:
+                pass
+                
+        except Exception as e:
+            print(f"更新预览失败: {e}")
+    
+    def _create_preview_ass(self, srt_file, ass_file):
+        """创建预览用的ASS文件"""
+        from videotrans.util import tools
+        
+        with open(ass_file, 'w', encoding='utf-8') as file:
+            stem = Path(srt_file).stem
+            file.write("[Script Info]\n")
+            file.write(f"Title: {stem}\n")
+            file.write(f"Original Script: {stem}\n")
+            file.write("ScriptType: v4.00+\n")
+            file.write("PlayResX: 384\nPlayResY: 288\n")
+            file.write("ScaledBorderAndShadow: yes\n")
+            file.write("YCbCr Matrix: None\n")
+            file.write("\n[V4+ Styles]\n")
+            file.write(
+                f"Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
+            
+            left = self.marginL.text() if self.marginL.text() else '10'
+            right = self.marginR.text() if self.marginR.text() else '10'
+            vbottom = self.marginV.text() if self.marginV.text() else '10'
+            align = config.POSTION_ASS_VK.get(self.position.currentText(), 2)
+            shadow = self.shadow.text() if self.shadow.text() else '1'
+            outline = self.outline.text() if self.outline.text() else '1'
+            
+            bgcolor = self.qcolor_to_ass_color(self.selected_backgroundcolor, type='bg')
+            bdcolor = self.qcolor_to_ass_color(self.selected_bordercolor, type='bd')
+            
+            if self.ysphb_borderstyle.isChecked():
+                bdcolor = bgcolor
+            fontcolor = self.qcolor_to_ass_color(self.selected_color, type='fc')
+            
+            font_size = self.font_size_edit.text() if self.font_size_edit.text() else "16"
+            
+            file.write(
+                f'Style: Default,{self.selected_font.family()},{font_size},{fontcolor},{fontcolor},{bdcolor},{bgcolor},{int(self.selected_font.bold())},{int(self.selected_font.italic())},0,0,100,100,0,0,{3 if self.ysphb_borderstyle.isChecked() else 1},{outline},{shadow},{align},{left},{right},{vbottom},1\n')
+            file.write("\n[Events]\n")
+            file.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+            
+            srt_list = tools.get_subtitle_from_srt(srt_file, is_file=True)
+            for it in srt_list:
+                start_str = self._format_milliseconds(it['start_time'])
+                end_str = self._format_milliseconds(it['end_time'])
+                text = it['text'].replace("\n", "\\N")
+                file.write(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text}\n")
+    
+    def _format_milliseconds(self, milliseconds):
+        """将毫秒数转换为 HH:mm:ss.zz 格式的字符串"""
+        seconds = milliseconds / 1000
+        minutes, seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        milliseconds_part = int((seconds * 1000) % 1000) // 10
+        
+        formatted_hours = f"{int(hours):02}"
+        formatted_minutes = f"{int(minutes):02}"
+        formatted_seconds = f"{int(seconds):02}"
+        formatted_milliseconds = f"{milliseconds_part:02}"
+        
+        return f"{formatted_hours}:{formatted_minutes}:{formatted_seconds}.{formatted_milliseconds}"
 
     def retranslateUi(self, vasrt):
         vasrt.setWindowTitle("视频、音频、字幕三者合并" if config.defaulelang == 'zh' else 'Video, audio, and subtitle merging')

@@ -36,7 +36,7 @@ flask
 waitress
 edge-tts
 srt
-deepgram-sdk
+deepgram-sdk<5.0
 deepgram-captions
 funasr
 modelscope
