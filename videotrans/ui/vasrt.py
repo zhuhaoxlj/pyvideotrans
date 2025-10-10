@@ -45,6 +45,8 @@ class Ui_vasrt(object):
         self.video_duration_ms = 0  # 视频时长（毫秒）
         self.video_fps = 25  # 视频帧率（默认25fps）
         self.current_time_ms = 0  # 当前时间位置（毫秒）
+        self.subtitle_list = []  # 存储字幕列表
+        self.current_srt_path = None  # 存储当前字幕文件路径
         
         # 添加防抖定时器
         self.preview_update_timer = QTimer()
@@ -190,6 +192,7 @@ class Ui_vasrt(object):
         self.ysphb_srtinput = QtWidgets.QLineEdit()
         self.ysphb_srtinput.setMinimumSize(QtCore.QSize(0, 40))
         self.ysphb_srtinput.setObjectName("ysphb_srtinput")
+        self.ysphb_srtinput.textChanged.connect(self._on_srt_file_changed)
 
         self.h6.addWidget(self.ysphb_srtinput, 0, QtCore.Qt.AlignTop)
         self.ysphb_selectsrt = QtWidgets.QPushButton()
@@ -658,6 +661,44 @@ class Ui_vasrt(object):
         except Exception as e:
             print(f"提取视频帧失败: {e}")
     
+    def _on_srt_file_changed(self, srt_path):
+        """字幕文件路径改变时的处理"""
+        if not srt_path or not Path(srt_path).exists():
+            self.subtitle_list = []
+            self.current_srt_path = None
+            return
+        
+        # 只有真正的srt文件才加载
+        if not srt_path.endswith('.srt'):
+            return
+            
+        try:
+            from videotrans.util import tools
+            # 加载字幕列表
+            self.subtitle_list = tools.get_subtitle_from_srt(srt_path, is_file=True)
+            self.current_srt_path = srt_path
+            print(f"成功加载字幕文件，共 {len(self.subtitle_list)} 条字幕")
+            # 更新预览
+            self.update_subtitle_preview()
+        except Exception as e:
+            print(f"加载字幕文件失败: {e}")
+            self.subtitle_list = []
+            self.current_srt_path = None
+    
+    def _get_subtitle_at_time(self, time_ms):
+        """获取指定时间点的字幕文本"""
+        if not self.subtitle_list:
+            # 没有字幕文件，返回示例文本
+            return "这是字幕预览效果\nSubtitle Preview Effect"
+        
+        # 查找当前时间点对应的字幕
+        for sub in self.subtitle_list:
+            if sub['start_time'] <= time_ms <= sub['end_time']:
+                return sub['text']
+        
+        # 当前时间点没有字幕，返回空字符串或提示
+        return ""  # 或者返回 "[当前时间无字幕]"
+    
     def update_subtitle_preview(self):
         """更新字幕预览（使用防抖）"""
         # 停止之前的定时器
@@ -682,9 +723,20 @@ class Ui_vasrt(object):
             import time
             from videotrans.util import tools
             
+            # 获取当前时间点的字幕文本
+            subtitle_text = self._get_subtitle_at_time(self.current_time_ms)
+            
+            # 如果没有字幕文本，直接显示原视频帧
+            if not subtitle_text:
+                pixmap = QPixmap(self.video_frame_path)
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self.preview_label.setPixmap(scaled_pixmap)
+                return
+            
             # 创建临时字幕文件用于预览
             preview_srt = config.TEMP_HOME + f"/preview_{time.time()}.srt"
-            preview_text = "1\n00:00:00,000 --> 00:00:05,000\n这是字幕预览效果\nSubtitle Preview Effect\n\n"
+            preview_text = f"1\n00:00:00,000 --> 00:00:05,000\n{subtitle_text}\n\n"
             
             with open(preview_srt, 'w', encoding='utf-8') as f:
                 f.write(preview_text)
