@@ -296,8 +296,13 @@ def openwin():
                 if use_bilingual_style and '\\N' in text:
                     lines = text.split('\\N', 1)
                     if len(lines) == 2:
-                        # 第一行使用Default样式，第二行使用Secondary样式
-                        text = f"{{\\rDefault}}{lines[0].strip()}\\N{{\\rSecondary}}{lines[1].strip()}"
+                        # 根据是否勾选"调换顺序"来决定上下顺序
+                        if winobj.swap_subtitle_order_checkbox.isChecked():
+                            # 第二语言在上，第一语言在下
+                            text = f"{{\\rSecondary}}{lines[1].strip()}\\N{{\\rDefault}}{lines[0].strip()}"
+                        else:
+                            # 第一语言在上，第二语言在下（默认）
+                            text = f"{{\\rDefault}}{lines[0].strip()}\\N{{\\rSecondary}}{lines[1].strip()}"
                 
                 file.write(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text}\n")
         return True

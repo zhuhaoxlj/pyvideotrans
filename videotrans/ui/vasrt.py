@@ -391,8 +391,17 @@ class Ui_vasrt(object):
             else 'Enable different styles for the second line in bilingual subtitles')
         self.bilingual_subtitle_checkbox.stateChanged.connect(self._toggle_secondary_style)
         
+        # 调换顺序复选框
+        self.swap_subtitle_order_checkbox = QtWidgets.QCheckBox()
+        self.swap_subtitle_order_checkbox.setText('调换顺序(第二语言在上)' if config.defaulelang == 'zh' else 'Swap Order (2nd on top)')
+        self.swap_subtitle_order_checkbox.setToolTip(
+            '勾选后第二语言显示在上方，第一语言显示在下方' if config.defaulelang == 'zh' 
+            else 'When checked, the second language displays on top, first language on bottom')
+        self.swap_subtitle_order_checkbox.stateChanged.connect(lambda: self.update_subtitle_preview())
+        
         bilingual_layout = QHBoxLayout()
         bilingual_layout.addWidget(self.bilingual_subtitle_checkbox)
+        bilingual_layout.addWidget(self.swap_subtitle_order_checkbox)
         bilingual_layout.addStretch()
         
         # 第二语言样式控件
@@ -991,8 +1000,13 @@ class Ui_vasrt(object):
                 if is_bilingual and '\\N' in text:
                     lines = text.split('\\N', 1)
                     if len(lines) == 2:
-                        # 第一行使用Default样式，第二行使用Secondary样式
-                        text = f"{{\\rDefault}}{lines[0].strip()}\\N{{\\rSecondary}}{lines[1].strip()}"
+                        # 根据是否勾选"调换顺序"来决定上下顺序
+                        if self.swap_subtitle_order_checkbox.isChecked():
+                            # 第二语言在上，第一语言在下
+                            text = f"{{\\rSecondary}}{lines[1].strip()}\\N{{\\rDefault}}{lines[0].strip()}"
+                        else:
+                            # 第一语言在上，第二语言在下（默认）
+                            text = f"{{\\rDefault}}{lines[0].strip()}\\N{{\\rSecondary}}{lines[1].strip()}"
                 
                 file.write(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text}\n")
     
