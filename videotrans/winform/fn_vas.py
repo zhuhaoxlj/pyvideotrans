@@ -334,10 +334,55 @@ def openwin():
             from PySide6.QtGui import QPixmap
             from PySide6.QtCore import Qt
             
-            # 获取视频时长，截取中间位置的一帧
-            video_duration = tools.get_video_duration(video_path)
-            # 截取视频中间位置的帧（单位：秒）
-            seek_time = video_duration / 2000  # 视频中间位置
+            # 获取视频时长（毫秒）
+            video_duration_ms = tools.get_video_duration(video_path)
+            
+            # 获取视频信息（包括帧率）
+            try:
+                video_info = tools.get_video_info(video_path)
+                # 尝试获取帧率
+                if 'video_fps' in video_info:
+                    winobj.video_fps = float(video_info['video_fps'])
+                elif 'streams_video' in video_info and video_info['streams_video']:
+                    # 从视频流信息中获取帧率
+                    fps_str = video_info['streams_video'][0].get('r_frame_rate', '25/1')
+                    if '/' in fps_str:
+                        num, den = fps_str.split('/')
+                        winobj.video_fps = float(num) / float(den) if float(den) > 0 else 25
+                    else:
+                        winobj.video_fps = float(fps_str)
+                else:
+                    winobj.video_fps = 25  # 默认帧率
+            except Exception as e:
+                print(f"获取视频帧率失败: {e}，使用默认值25fps")
+                winobj.video_fps = 25
+            
+            # 保存视频路径和时长信息
+            winobj.current_video_path = video_path
+            winobj.video_duration_ms = video_duration_ms
+            
+            # 更新总时长标签
+            seconds = video_duration_ms / 1000
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            duration_str = f"{hours:02d}:{minutes:02d}:{secs:02d}"
+            winobj.timeline_duration_label.setText(duration_str)
+            
+            # 启用时间轴滑块和帧调整按钮
+            winobj.timeline_slider.setEnabled(True)
+            winobj.frame_prev_btn.setEnabled(True)
+            winobj.frame_next_btn.setEnabled(True)
+            
+            # 设置滑块到中间位置
+            winobj.timeline_slider.setValue(50)
+            
+            # 截取视频中间位置的帧
+            seek_time = video_duration_ms / 2000  # 视频中间位置（秒）
+            current_time_ms = int(video_duration_ms * 50 / 100)
+            
+            # 保存当前时间
+            winobj.current_time_ms = current_time_ms
             
             # 生成临时文件路径
             frame_path = config.TEMP_HOME + f"/video_frame_{time.time()}.jpg"
@@ -361,6 +406,9 @@ def openwin():
                     scaled_pixmap = pixmap.scaled(winobj.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
                     winobj.preview_label.setPixmap(scaled_pixmap)
                     winobj.preview_label.setText("")
+                    
+                    # 更新当前时间标签
+                    winobj._update_time_label(current_time_ms)
                     
                     # 触发字幕预览更新
                     winobj.update_subtitle_preview()

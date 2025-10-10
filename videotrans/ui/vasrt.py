@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QMetaObject, Qt, QTimer
 from PySide6.QtGui import QFont, QColor, QPixmap
-from PySide6.QtWidgets import QHBoxLayout, QFontDialog, QColorDialog, QLabel
+from PySide6.QtWidgets import QHBoxLayout, QFontDialog, QColorDialog, QLabel, QSlider
 
 from videotrans.configure import config
 
@@ -41,11 +41,81 @@ class Ui_vasrt(object):
         self.preview_label.setText("视频预览区域\n选择视频后将显示字幕效果" if config.defaulelang == 'zh' else "Video Preview Area\nSubtitle effect will be displayed after selecting video")
         self.preview_label.setScaledContents(False)
         self.video_frame_path = None  # 存储视频帧路径
+        self.current_video_path = None  # 存储当前视频路径
+        self.video_duration_ms = 0  # 视频时长（毫秒）
+        self.video_fps = 25  # 视频帧率（默认25fps）
+        self.current_time_ms = 0  # 当前时间位置（毫秒）
         
         # 添加防抖定时器
         self.preview_update_timer = QTimer()
         self.preview_update_timer.setSingleShot(True)
         self.preview_update_timer.timeout.connect(self._do_update_preview)
+        
+        # 添加时间轴滑块
+        self.timeline_layout = QtWidgets.QHBoxLayout()
+        
+        # 当前时间标签
+        self.timeline_current_label = QtWidgets.QLabel()
+        self.timeline_current_label.setText("00:00:00")
+        self.timeline_current_label.setMinimumWidth(70)
+        self.timeline_current_label.setAlignment(Qt.AlignCenter)
+        
+        # 帧数调整设置
+        self.frame_step_label = QtWidgets.QLabel()
+        self.frame_step_label.setText("步进:" if config.defaulelang == 'zh' else "Step:")
+        self.frame_step_label.setToolTip("每次调整的帧数" if config.defaulelang == 'zh' else "Frames to adjust each time")
+        
+        self.frame_step_input = QtWidgets.QLineEdit()
+        self.frame_step_input.setText("1")
+        self.frame_step_input.setMaximumWidth(50)
+        self.frame_step_input.setAlignment(Qt.AlignCenter)
+        self.frame_step_input.setToolTip("输入每次跳转的帧数(1-100)" if config.defaulelang == 'zh' else "Enter frames to skip (1-100)")
+        self.frame_step_input.textChanged.connect(self._update_frame_buttons_text)
+        
+        # 向前N帧按钮
+        self.frame_prev_btn = QtWidgets.QPushButton()
+        self.frame_prev_btn.setText("◀ -1帧" if config.defaulelang == 'zh' else "◀ -1")
+        self.frame_prev_btn.setMinimumSize(QtCore.QSize(80, 30))
+        self.frame_prev_btn.setMaximumSize(QtCore.QSize(80, 30))
+        self.frame_prev_btn.setCursor(Qt.PointingHandCursor)
+        self.frame_prev_btn.setEnabled(False)
+        self.frame_prev_btn.clicked.connect(self._on_prev_frame)
+        self.frame_prev_btn.setToolTip("向前N帧" if config.defaulelang == 'zh' else "Previous N frames")
+        
+        # 时间轴滑块
+        self.timeline_slider = QSlider(Qt.Horizontal)
+        self.timeline_slider.setObjectName("timeline_slider")
+        self.timeline_slider.setMinimum(0)
+        self.timeline_slider.setMaximum(100)
+        self.timeline_slider.setValue(50)
+        self.timeline_slider.setEnabled(False)
+        self.timeline_slider.setTickPosition(QSlider.TicksBelow)
+        self.timeline_slider.setTickInterval(10)
+        self.timeline_slider.valueChanged.connect(self._on_timeline_changed)
+        
+        # 向后N帧按钮
+        self.frame_next_btn = QtWidgets.QPushButton()
+        self.frame_next_btn.setText("+1帧 ▶" if config.defaulelang == 'zh' else "+1 ▶")
+        self.frame_next_btn.setMinimumSize(QtCore.QSize(80, 30))
+        self.frame_next_btn.setMaximumSize(QtCore.QSize(80, 30))
+        self.frame_next_btn.setCursor(Qt.PointingHandCursor)
+        self.frame_next_btn.setEnabled(False)
+        self.frame_next_btn.clicked.connect(self._on_next_frame)
+        self.frame_next_btn.setToolTip("向后N帧" if config.defaulelang == 'zh' else "Next N frames")
+        
+        # 总时长标签
+        self.timeline_duration_label = QtWidgets.QLabel()
+        self.timeline_duration_label.setText("00:00:00")
+        self.timeline_duration_label.setMinimumWidth(70)
+        self.timeline_duration_label.setAlignment(Qt.AlignCenter)
+        
+        self.timeline_layout.addWidget(self.timeline_current_label)
+        self.timeline_layout.addWidget(self.frame_step_label)
+        self.timeline_layout.addWidget(self.frame_step_input)
+        self.timeline_layout.addWidget(self.frame_prev_btn)
+        self.timeline_layout.addWidget(self.timeline_slider)
+        self.timeline_layout.addWidget(self.frame_next_btn)
+        self.timeline_layout.addWidget(self.timeline_duration_label)
         
         # 添加刷新预览按钮
         self.preview_layout = QtWidgets.QHBoxLayout()
@@ -60,6 +130,7 @@ class Ui_vasrt(object):
 
         # 将预览区域添加到布局
         self.v3.addWidget(self.preview_label)
+        self.v3.addLayout(self.timeline_layout)  # 添加时间轴
         self.v3.addLayout(self.preview_layout)
         
         # h3
@@ -449,6 +520,143 @@ class Ui_vasrt(object):
         
         # 更新预览
         self.update_subtitle_preview()
+    
+    def _get_frame_step(self):
+        """获取用户设置的帧数步进值"""
+        try:
+            step = int(self.frame_step_input.text())
+            # 限制在1-100之间
+            return max(1, min(step, 100))
+        except:
+            return 1
+    
+    def _update_frame_buttons_text(self):
+        """更新按钮文本显示当前帧数"""
+        step = self._get_frame_step()
+        if config.defaulelang == 'zh':
+            self.frame_prev_btn.setText(f"◀ -{step}帧")
+            self.frame_next_btn.setText(f"+{step}帧 ▶")
+        else:
+            self.frame_prev_btn.setText(f"◀ -{step}")
+            self.frame_next_btn.setText(f"+{step} ▶")
+    
+    def _on_prev_frame(self):
+        """向前N帧"""
+        step = self._get_frame_step()
+        self._adjust_frame(-step)
+    
+    def _on_next_frame(self):
+        """向后N帧"""
+        step = self._get_frame_step()
+        self._adjust_frame(step)
+    
+    def _adjust_frame(self, frame_count):
+        """微调帧数
+        frame_count: 正数向后，负数向前（帧数）
+        """
+        if not self.current_video_path or self.video_duration_ms == 0:
+            return
+        
+        # 计算一帧的时长（毫秒）
+        frame_duration_ms = 1000 / self.video_fps
+        
+        # 计算新的时间位置
+        new_time_ms = self.current_time_ms + (frame_count * frame_duration_ms)
+        
+        # 限制在视频范围内
+        new_time_ms = max(0, min(new_time_ms, self.video_duration_ms))
+        
+        # 更新当前时间
+        self.current_time_ms = new_time_ms
+        
+        # 更新时间标签
+        self._update_time_label(int(new_time_ms))
+        
+        # 提取新的视频帧
+        self._extract_frame_at_time(int(new_time_ms))
+        
+        # 同步滑块位置（不触发valueChanged信号）
+        if self.video_duration_ms > 0:
+            slider_value = int(new_time_ms * 100 / self.video_duration_ms)
+            self.timeline_slider.blockSignals(True)
+            self.timeline_slider.setValue(slider_value)
+            self.timeline_slider.blockSignals(False)
+    
+    def _on_timeline_changed(self, value):
+        """时间轴滑块改变时的处理"""
+        if not self.current_video_path or self.video_duration_ms == 0:
+            return
+        
+        # 计算当前时间位置（毫秒）
+        current_time_ms = int(self.video_duration_ms * value / 100)
+        
+        # 保存当前时间
+        self.current_time_ms = current_time_ms
+        
+        # 更新时间标签
+        self._update_time_label(current_time_ms)
+        
+        # 提取新的视频帧
+        self._extract_frame_at_time(current_time_ms)
+    
+    def _update_time_label(self, time_ms):
+        """更新时间标签显示"""
+        seconds = time_ms / 1000
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        time_str = f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        self.timeline_current_label.setText(time_str)
+    
+    def _extract_frame_at_time(self, time_ms):
+        """提取指定时间点的视频帧"""
+        if not self.current_video_path:
+            return
+        
+        try:
+            import time
+            from videotrans.util import tools
+            from PySide6.QtGui import QPixmap
+            from PySide6.QtCore import Qt
+            
+            # 转换为秒
+            seek_time = time_ms / 1000
+            
+            # 生成临时文件路径
+            frame_path = config.TEMP_HOME + f"/video_frame_{time.time()}.jpg"
+            
+            # 使用ffmpeg截取视频帧
+            cmd = [
+                '-y',
+                '-ss', str(seek_time),
+                '-i', self.current_video_path,
+                '-vframes', '1',
+                '-q:v', '2',
+                frame_path
+            ]
+            tools.runffmpeg(cmd)
+            
+            # 如果截取成功，更新预览
+            if Path(frame_path).exists():
+                # 删除旧的视频帧文件
+                if self.video_frame_path and Path(self.video_frame_path).exists():
+                    try:
+                        import os
+                        os.remove(self.video_frame_path)
+                    except:
+                        pass
+                
+                self.video_frame_path = frame_path
+                pixmap = QPixmap(frame_path)
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self.preview_label.setPixmap(scaled_pixmap)
+                    self.preview_label.setText("")
+                    
+                    # 触发字幕预览更新
+                    self.update_subtitle_preview()
+        except Exception as e:
+            print(f"提取视频帧失败: {e}")
     
     def update_subtitle_preview(self):
         """更新字幕预览（使用防抖）"""
