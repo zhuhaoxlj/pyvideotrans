@@ -259,16 +259,46 @@ def openwin():
                 bdcolor = bgcolor
             fontcolor = winobj.qcolor_to_ass_color(winobj.selected_color, type='fc')
 
+            # 写入默认样式（第一行文本）
             file.write(
                 f'Style: Default,{winobj.selected_font.family()},{winobj.font_size_edit.text() if winobj.font_size_edit.text() else "20"},{fontcolor},{fontcolor},{bdcolor},{bgcolor},{int(winobj.selected_font.bold())},{int(winobj.selected_font.italic())},0,0,100,100,0,0,{3 if winobj.ysphb_borderstyle.isChecked() else 1},{outline},{shadow},{align},{left},{right},{vbottom},1\n')
-            file.write("\n[Events]\n")
-
-            file.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+            
+            # 检测是否为双语字幕
             srt_list = tools.get_subtitle_from_srt(file_path, is_file=True)
+            is_bilingual = any('\n' in it['text'] for it in srt_list)
+            
+            # 如果是双语字幕或勾选了双语样式，添加第二种样式（第二行文本）
+            use_bilingual_style = is_bilingual or winobj.bilingual_subtitle_checkbox.isChecked()
+            if use_bilingual_style:
+                # 使用GUI配置的第二语言样式
+                fontcolor_sec = winobj.qcolor_to_ass_color(winobj.selected_color_secondary, type='fc')
+                bdcolor_sec = winobj.qcolor_to_ass_color(winobj.selected_bordercolor_secondary, type='bd')
+                bgcolor_sec = winobj.qcolor_to_ass_color(winobj.selected_backgroundcolor_secondary, type='bg')
+                
+                fontname_sec = winobj.selected_font_secondary.family()
+                fontsize_sec = winobj.font_size_edit_secondary.text() if winobj.font_size_edit_secondary.text() else "14"
+                outline_sec = outline
+                shadow_sec = shadow
+                borderstyle_sec = 3 if winobj.ysphb_borderstyle.isChecked() else 1
+                
+                file.write(
+                    f'Style: Secondary,{fontname_sec},{fontsize_sec},{fontcolor_sec},{fontcolor_sec},{bdcolor_sec},{bgcolor_sec},0,0,0,0,100,100,0,0,{borderstyle_sec},{outline_sec},{shadow_sec},{align},{left},{right},{vbottom},1\n')
+            
+            file.write("\n[Events]\n")
+            file.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+            
             for it in srt_list:
                 start_str = format_milliseconds(it['start_time'])
                 end_str = format_milliseconds(it['end_time'])
                 text = it['text'].replace("\n", "\\N")
+                
+                # 如果使用双语样式，为两行文本分别指定样式
+                if use_bilingual_style and '\\N' in text:
+                    lines = text.split('\\N', 1)
+                    if len(lines) == 2:
+                        # 第一行使用Default样式，第二行使用Secondary样式
+                        text = f"{{\\rDefault}}{lines[0].strip()}\\N{{\\rSecondary}}{lines[1].strip()}"
+                
                 file.write(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text}\n")
         return True
 

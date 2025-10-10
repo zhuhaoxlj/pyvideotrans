@@ -330,6 +330,12 @@ class Ui_vasrt(object):
         self.selected_color = QColor('#00FFFFFF')  # 默认颜色
         self.selected_backgroundcolor = QColor('#00000000')  # 默认颜色
         self.selected_bordercolor = QColor('#00000000')  # 默认颜色
+        
+        # 第二语言样式（用于双语字幕）
+        self.selected_font_secondary = QFont('Arial', 14)
+        self.selected_color_secondary = QColor('#00E0E0E0')  # 浅灰色
+        self.selected_backgroundcolor_secondary = QColor('#00000000')
+        self.selected_bordercolor_secondary = QColor('#00000000')
 
         self.ysphb_borderstyle = QtWidgets.QCheckBox()
         self.ysphb_borderstyle.setObjectName("ysphb_borderstyle")
@@ -362,6 +368,12 @@ class Ui_vasrt(object):
         format_layout2 = QHBoxLayout()
         format_layout2.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
+        # 添加第一语言标签
+        first_lang_label = QtWidgets.QLabel()
+        first_lang_label.setText('第一语言:' if config.defaulelang == 'zh' else '1st Language:')
+        first_lang_label.setStyleSheet("font-weight: bold; color: #4CAF50;")
+        
+        format_layout2.addWidget(first_lang_label)
         format_layout2.addWidget(fontsize_label)
         format_layout2.addWidget(self.font_size_edit)
         format_layout2.addStretch()
@@ -371,8 +383,81 @@ class Ui_vasrt(object):
         format_layout2.addWidget(self.bordercolor_button)
         format_layout2.addWidget(self.ysphb_borderstyle)
 
+        # 双语字幕开关
+        self.bilingual_subtitle_checkbox = QtWidgets.QCheckBox()
+        self.bilingual_subtitle_checkbox.setText('启用双语字幕样式' if config.defaulelang == 'zh' else 'Enable Bilingual Subtitle')
+        self.bilingual_subtitle_checkbox.setToolTip(
+            '勾选后可为双语字幕的第二行文本设置不同样式' if config.defaulelang == 'zh' 
+            else 'Enable different styles for the second line in bilingual subtitles')
+        self.bilingual_subtitle_checkbox.stateChanged.connect(self._toggle_secondary_style)
+        
+        bilingual_layout = QHBoxLayout()
+        bilingual_layout.addWidget(self.bilingual_subtitle_checkbox)
+        bilingual_layout.addStretch()
+        
+        # 第二语言样式控件
+        fontsize_label_sec = QtWidgets.QLabel()
+        fontsize_label_sec.setText('字体大小' if config.defaulelang == 'zh' else 'Font Size')
+        self.font_size_edit_secondary = QtWidgets.QLineEdit()
+        self.font_size_edit_secondary.setMinimumWidth(50)
+        self.font_size_edit_secondary.setText('14')
+        self.font_size_edit_secondary.setPlaceholderText("字体大小" if config.defaulelang == 'zh' else 'Font Size')
+        self.font_size_edit_secondary.setToolTip("第二语言字体大小" if config.defaulelang == 'zh' else 'Secondary Font Size')
+        
+        self.font_button_secondary = QtWidgets.QPushButton("选择字体" if config.defaulelang == 'zh' else 'Select Fonts')
+        self.font_button_secondary.setToolTip('第二语言字体' if config.defaulelang == 'zh' else 'Secondary font')
+        self.font_button_secondary.clicked.connect(self.choose_font_secondary)
+        self.font_button_secondary.setMinimumWidth(150)
+        self.font_button_secondary.setCursor(Qt.PointingHandCursor)
+        
+        self.color_button_secondary = QtWidgets.QPushButton("字体颜色" if config.defaulelang == 'zh' else 'Text Colors')
+        self.color_button_secondary.setCursor(Qt.PointingHandCursor)
+        self.color_button_secondary.clicked.connect(self.choose_color_secondary)
+        self.color_button_secondary.setMinimumWidth(150)
+        
+        self.backgroundcolor_button_secondary = QtWidgets.QPushButton(
+            "背景阴影色" if config.defaulelang == 'zh' else 'Background Colors')
+        self.backgroundcolor_button_secondary.setCursor(Qt.PointingHandCursor)
+        self.backgroundcolor_button_secondary.setMinimumWidth(150)
+        self.backgroundcolor_button_secondary.clicked.connect(self.choose_backgroundcolor_secondary)
+        
+        self.bordercolor_button_secondary = QtWidgets.QPushButton("轮廓色" if config.defaulelang == 'zh' else 'Border Colors')
+        self.bordercolor_button_secondary.setCursor(Qt.PointingHandCursor)
+        self.bordercolor_button_secondary.clicked.connect(self.choose_bordercolor_secondary)
+        self.bordercolor_button_secondary.setMinimumWidth(150)
+        
+        format_layout3 = QHBoxLayout()
+        format_layout3.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        
+        # 添加第二语言标签
+        second_lang_label = QtWidgets.QLabel()
+        second_lang_label.setText('第二语言:' if config.defaulelang == 'zh' else '2nd Language:')
+        second_lang_label.setStyleSheet("font-weight: bold; color: #FF9800;")
+        
+        format_layout3.addWidget(second_lang_label)
+        format_layout3.addWidget(fontsize_label_sec)
+        format_layout3.addWidget(self.font_size_edit_secondary)
+        format_layout3.addStretch()
+        format_layout3.addWidget(self.font_button_secondary)
+        format_layout3.addWidget(self.color_button_secondary)
+        format_layout3.addWidget(self.backgroundcolor_button_secondary)
+        format_layout3.addWidget(self.bordercolor_button_secondary)
+        
+        # 将第二语言控件存储起来，方便显示/隐藏
+        self.secondary_widgets = [
+            second_lang_label, fontsize_label_sec, self.font_size_edit_secondary,
+            self.font_button_secondary, self.color_button_secondary,
+            self.backgroundcolor_button_secondary, self.bordercolor_button_secondary
+        ]
+        
+        # 初始隐藏第二语言控件
+        for widget in self.secondary_widgets:
+            widget.setVisible(False)
+
         self.v3.addLayout(format_layout)
         self.v3.addLayout(format_layout2)
+        self.v3.addLayout(bilingual_layout)
+        self.v3.addLayout(format_layout3)
 
         self.ysphb_startbtn = QtWidgets.QPushButton()
         self.ysphb_startbtn.setMinimumSize(QtCore.QSize(250, 40))
@@ -406,6 +491,7 @@ class Ui_vasrt(object):
         self.outline.textChanged.connect(lambda: self.update_subtitle_preview())
         self.shadow.textChanged.connect(lambda: self.update_subtitle_preview())
         self.font_size_edit.textChanged.connect(lambda: self.update_subtitle_preview())
+        self.font_size_edit_secondary.textChanged.connect(lambda: self.update_subtitle_preview())  # 第二语言字号输入监听
         self.ysphb_borderstyle.toggled.connect(lambda: self.update_subtitle_preview())
 
         QMetaObject.connectSlotsByName(vasrt)
@@ -423,8 +509,14 @@ class Ui_vasrt(object):
         return f"&H{a:02X}{b:02X}{g:02X}{r:02X}".upper()
         # return f"&H{b:02X}{g:02X}{r:02X}"
 
+    def _toggle_secondary_style(self, state):
+        """切换第二语言样式控件的显示/隐藏"""
+        is_visible = (state == Qt.CheckState.Checked.value)
+        for widget in self.secondary_widgets:
+            widget.setVisible(is_visible)
+        self.update_subtitle_preview()
+    
     def choose_font(self):
-
         dialog = QFontDialog(self.selected_font, self)
         if dialog.exec():
             font = dialog.selectedFont()
@@ -434,6 +526,17 @@ class Ui_vasrt(object):
             self.font_size_edit.setText(str(font_size))
             self.font_button.setText(font_name)
             self._setfont()
+            self.update_subtitle_preview()
+    
+    def choose_font_secondary(self):
+        """选择第二语言字体"""
+        dialog = QFontDialog(self.selected_font_secondary, self)
+        dialog.setWindowTitle('选择第二语言字体' if config.defaulelang == 'zh' else 'Select Secondary Font')
+        if dialog.exec():
+            font = dialog.selectedFont()
+            font_size = font.pointSize()
+            self.selected_font_secondary = font
+            self.font_size_edit_secondary.setText(str(font_size))
             self.update_subtitle_preview()
 
     def _setfont(self):
@@ -474,6 +577,19 @@ class Ui_vasrt(object):
             self.selected_color = color
             self._setfont()
             self.update_subtitle_preview()
+    
+    def choose_color_secondary(self):
+        """选择第二语言字体颜色"""
+        color = self.selected_color_secondary
+        color.setAlpha(0)
+        dialog = QColorDialog(color, self)
+        dialog.setWindowTitle('选择第二语言字体颜色' if config.defaulelang == 'zh' else 'Select Secondary Text Color')
+        dialog.setOption(QColorDialog.ShowAlphaChannel, True)
+        dialog.exec()
+        color = dialog.currentColor()
+        if color.isValid():
+            self.selected_color_secondary = color
+            self.update_subtitle_preview()
 
     def choose_backgroundcolor(self):
         color = self.selected_backgroundcolor
@@ -488,11 +604,22 @@ class Ui_vasrt(object):
             self.selected_backgroundcolor = color
             self._setfont()
             self.update_subtitle_preview()
+    
+    def choose_backgroundcolor_secondary(self):
+        """选择第二语言背景色"""
+        color = self.selected_backgroundcolor_secondary
+        color.setAlpha(0)
+        dialog = QColorDialog(color, self)
+        dialog.setWindowTitle('选择第二语言背景色' if config.defaulelang == 'zh' else 'Select Secondary Background Color')
+        dialog.setOption(QColorDialog.ShowAlphaChannel, True)
+        dialog.exec()
+        color = dialog.currentColor()
+        if color.isValid():
+            self.selected_backgroundcolor_secondary = color
+            self.update_subtitle_preview()
 
     def choose_bordercolor(self):
-
         color = self.selected_bordercolor
-
         dialog = QColorDialog(color, self)
         dialog.setOption(QColorDialog.ShowAlphaChannel, True)  # 启用透明度选择
 
@@ -501,6 +628,18 @@ class Ui_vasrt(object):
         if color.isValid():
             self.selected_bordercolor = color
             self._setfont()
+            self.update_subtitle_preview()
+    
+    def choose_bordercolor_secondary(self):
+        """选择第二语言轮廓色"""
+        color = self.selected_bordercolor_secondary
+        dialog = QColorDialog(color, self)
+        dialog.setWindowTitle('选择第二语言轮廓色' if config.defaulelang == 'zh' else 'Select Secondary Border Color')
+        dialog.setOption(QColorDialog.ShowAlphaChannel, True)
+        dialog.exec()
+        color = dialog.currentColor()
+        if color.isValid():
+            self.selected_bordercolor_secondary = color
             self.update_subtitle_preview()
 
     def remainraw(self, t):
@@ -815,16 +954,46 @@ class Ui_vasrt(object):
             
             font_size = self.font_size_edit.text() if self.font_size_edit.text() else "16"
             
+            # 写入默认样式（第一行文本）
             file.write(
                 f'Style: Default,{self.selected_font.family()},{font_size},{fontcolor},{fontcolor},{bdcolor},{bgcolor},{int(self.selected_font.bold())},{int(self.selected_font.italic())},0,0,100,100,0,0,{3 if self.ysphb_borderstyle.isChecked() else 1},{outline},{shadow},{align},{left},{right},{vbottom},1\n')
+            
+            # 检测是否为双语字幕
+            srt_list = tools.get_subtitle_from_srt(srt_file, is_file=True)
+            is_bilingual = any('\n' in it['text'] for it in srt_list)
+            
+            # 如果是双语字幕或勾选了双语样式，添加第二种样式（第二行文本）
+            use_bilingual_style = is_bilingual or self.bilingual_subtitle_checkbox.isChecked()
+            if use_bilingual_style:
+                # 使用GUI配置的第二语言样式
+                fontcolor_sec = self.qcolor_to_ass_color(self.selected_color_secondary, type='fc')
+                bdcolor_sec = self.qcolor_to_ass_color(self.selected_bordercolor_secondary, type='bd')
+                bgcolor_sec = self.qcolor_to_ass_color(self.selected_backgroundcolor_secondary, type='bg')
+                
+                fontname_sec = self.selected_font_secondary.family()
+                fontsize_sec = self.font_size_edit_secondary.text() if self.font_size_edit_secondary.text() else "14"
+                outline_sec = outline
+                shadow_sec = shadow
+                borderstyle_sec = 3 if self.ysphb_borderstyle.isChecked() else 1
+                
+                file.write(
+                    f'Style: Secondary,{fontname_sec},{fontsize_sec},{fontcolor_sec},{fontcolor_sec},{bdcolor_sec},{bgcolor_sec},0,0,0,0,100,100,0,0,{borderstyle_sec},{outline_sec},{shadow_sec},{align},{left},{right},{vbottom},1\n')
+            
             file.write("\n[Events]\n")
             file.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
             
-            srt_list = tools.get_subtitle_from_srt(srt_file, is_file=True)
             for it in srt_list:
                 start_str = self._format_milliseconds(it['start_time'])
                 end_str = self._format_milliseconds(it['end_time'])
                 text = it['text'].replace("\n", "\\N")
+                
+                # 如果是双语字幕，为两行文本分别指定样式
+                if is_bilingual and '\\N' in text:
+                    lines = text.split('\\N', 1)
+                    if len(lines) == 2:
+                        # 第一行使用Default样式，第二行使用Secondary样式
+                        text = f"{{\\rDefault}}{lines[0].strip()}\\N{{\\rSecondary}}{lines[1].strip()}"
+                
                 file.write(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text}\n")
     
     def _format_milliseconds(self, milliseconds):

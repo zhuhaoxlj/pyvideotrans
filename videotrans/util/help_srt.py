@@ -277,7 +277,17 @@ def get_srt_from_list(srt_list):
     return txt
 
 
-def set_ass_font(srtfile=None):
+def set_ass_font(srtfile=None, is_bilingual=False):
+    """
+    将SRT转换为ASS并设置字体样式
+    
+    Args:
+        srtfile: SRT文件路径
+        is_bilingual: 是否为双语字幕（两行文本需要不同样式）
+    
+    Returns:
+        ASS文件路径
+    """
     from . import help_ffmpeg
     from videotrans.configure import config
     if not os.path.exists(srtfile) or os.path.getsize(srtfile) == 0:
@@ -288,16 +298,26 @@ def set_ass_font(srtfile=None):
     with open(assfile, 'r', encoding='utf-8') as f:
         ass_str = f.readlines()
 
+    # 检测是否真的是双语字幕（检查第一个Dialogue是否包含\\N）
+    has_bilingual_content = False
+    for line in ass_str:
+        if line.startswith('Dialogue:') and '\\N' in line:
+            has_bilingual_content = True
+            break
+    
+    # 如果手动指定is_bilingual或检测到双语内容
+    use_bilingual_styles = is_bilingual or has_bilingual_content
+
     for i, it in enumerate(ass_str):
         if it.find('Style: ') == 0:
-            ass_str[
-                i] = 'Style: Default,{fontname},{fontsize},{fontcolor},{fontcolor},{fontbordercolor},{backgroundcolor},0,0,0,0,100,100,0,0,{borderstyle},{outline},{shadow},{subtitle_position},{marginL},{marginR},{marginV},1'.format(
+            # 创建第一种样式（用于第一行文本）
+            ass_str[i] = 'Style: Default,{fontname},{fontsize},{fontcolor},{fontcolor},{fontbordercolor},{backgroundcolor},0,0,0,0,100,100,0,0,{borderstyle},{outline},{shadow},{subtitle_position},{marginL},{marginR},{marginV},1\n'.format(
                 fontname=config.settings['fontname'],
                 fontsize=config.settings['fontsize'],
                 fontcolor=config.settings['fontcolor'],
                 fontbordercolor=config.settings['fontbordercolor'],
                 backgroundcolor=config.settings['backgroundcolor'],
-                borderstyle=int(config.settings.get('borderStyle', 1)),  # 1轮廓风格，3背景色块风格
+                borderstyle=int(config.settings.get('borderStyle', 1)),
                 outline=config.settings.get('outline', 1),
                 shadow=config.settings.get('shadow', 1),
                 subtitle_position=int(config.settings.get('subtitle_position', 2)),
@@ -305,8 +325,42 @@ def set_ass_font(srtfile=None):
                 marginR=int(config.settings.get('marginR', 10)),
                 marginV=int(config.settings.get('marginV', 10))
             )
+            
+            # 如果是双语字幕，添加第二种样式
+            if use_bilingual_styles:
+                second_style = 'Style: Secondary,{fontname},{fontsize},{fontcolor},{fontcolor},{fontbordercolor},{backgroundcolor},0,0,0,0,100,100,0,0,{borderstyle},{outline},{shadow},{subtitle_position},{marginL},{marginR},{marginV},1\n'.format(
+                    fontname=config.settings.get('fontname_secondary', config.settings['fontname']),
+                    fontsize=config.settings.get('fontsize_secondary', config.settings['fontsize']),
+                    fontcolor=config.settings.get('fontcolor_secondary', config.settings['fontcolor']),
+                    fontbordercolor=config.settings.get('fontbordercolor_secondary', config.settings['fontbordercolor']),
+                    backgroundcolor=config.settings.get('backgroundcolor_secondary', config.settings['backgroundcolor']),
+                    borderstyle=int(config.settings.get('borderStyle_secondary', config.settings.get('borderStyle', 1))),
+                    outline=config.settings.get('outline_secondary', config.settings.get('outline', 1)),
+                    shadow=config.settings.get('shadow_secondary', config.settings.get('shadow', 1)),
+                    subtitle_position=int(config.settings.get('subtitle_position', 2)),
+                    marginL=int(config.settings.get('marginL', 10)),
+                    marginR=int(config.settings.get('marginR', 10)),
+                    marginV=int(config.settings.get('marginV', 10))
+                )
+                ass_str.insert(i + 1, second_style)
         elif it.find('Dialogue: ') == 0:
-            ass_str[i] = it.replace('  ', '\\N')
+            # 处理双语字幕：将\\N替换为带样式的文本
+            if use_bilingual_styles and '\\N' in it:
+                # 分割文本部分
+                parts = it.split(',,', 1)
+                if len(parts) == 2:
+                    prefix, text = parts
+                    # 分离两行文本
+                    lines = text.split('\\N', 1)
+                    if len(lines) == 2:
+                        # 第一行使用Default样式，第二行使用Secondary样式
+                        ass_str[i] = f"{prefix},,{{\\rDefault}}{lines[0].strip()}\\N{{\\rSecondary}}{lines[1]}"
+                    else:
+                        ass_str[i] = it.replace('  ', '\\N')
+                else:
+                    ass_str[i] = it.replace('  ', '\\N')
+            else:
+                ass_str[i] = it.replace('  ', '\\N')
 
     with open(assfile, 'w', encoding='utf-8') as f:
         f.write("".join(ass_str))

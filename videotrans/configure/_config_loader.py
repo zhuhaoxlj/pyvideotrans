@@ -281,6 +281,16 @@ def parse_init(update_data=None):
         "outline": 1,
         "shadow": 1,
         "borderStyle": 1,  # 1或3， 轮廓描边风格对应 BorderStyle=1， 背景色块风格对应 BorderStyle=3
+        
+        # 双语字幕第二语言样式配置
+        "fontname_secondary": "黑体",
+        "fontsize_secondary": 14,  # 第二语言稍小
+        "fontcolor_secondary": "&hE0E0E0",  # 第二语言稍暗（浅灰色）
+        "fontbordercolor_secondary": "&h000000",
+        "backgroundcolor_secondary": "&h000000",
+        "outline_secondary": 1,
+        "shadow_secondary": 1,
+        "borderStyle_secondary": 1,
 
         "cjk_len": 40,  # 显示宽度（约20个中文字符或40个英文字符）
         "other_len": 80,  # 显示宽度（约40个中文字符或80个英文字符）
