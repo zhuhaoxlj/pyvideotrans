@@ -30,9 +30,9 @@ class FasterAll(BaseRecogn):
 
         if self.detect_language and self.detect_language[:2].lower() in ['zh', 'ja', 'ko', 'yu']:
             self.flag.append(" ")
-            self.maxlen = int(config.settings.get('cjk_len', 20))
+            self.maxlen = int(config.settings.get('cjk_len', 40))
         else:
-            self.maxlen = int(config.settings.get('other_len', 60))
+            self.maxlen = int(config.settings.get('other_len', 80))
 
     # 获取新进程的结果
     def _get_signal_from_process(self, q: multiprocessing.Queue):

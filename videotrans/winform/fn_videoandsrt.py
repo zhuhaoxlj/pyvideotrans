@@ -69,17 +69,8 @@ def openwin():
                         os.path.normpath(info['video'])
                     ]
                     if not self.is_soft or not self.language:
-                        # 硬字幕
-                        sub_list = tools.get_subtitle_from_srt(srt, is_file=True)
-                        text = ""
-                        for i, it in enumerate(sub_list):
-                            it['text'] = tools.textwrap(it['text'], self.maxlen).strip()
-                            text += f"{it['line']}\n{it['time']}\n{it['text'].strip()}\n\n"
-                        srtfile = config.TEMP_HOME + f"/srt{time.time()}.srt"
-                        with Path(srtfile).open('w', encoding='utf-8') as f:
-                            f.write(text)
-                            f.flush()
-                        assfile = tools.set_ass_font(srtfile)
+                        # 硬字幕 - 直接使用原始字幕，不进行textwrap换行，通过ASS的margin控制显示范围
+                        assfile = tools.set_ass_font(srt)
                         os.chdir(config.TEMP_HOME)
                         cmd += [
                             '-c:v',

@@ -50,10 +50,10 @@ class BaseRecogn(BaseCon):
         self.join_word_flag = " "
 
         if self.detect_language and self.detect_language[:2].lower() in ['zh', 'ja', 'ko']:
-            self.maxlen = int(float(config.settings.get('cjk_len', 20)))
+            self.maxlen = int(float(config.settings.get('cjk_len', 40)))
             self.jianfan = True if self.detect_language[:2] == 'zh' and config.settings.get('zh_hant_s') else False
         else:
-            self.maxlen = int(float(config.settings.get('other_len', 60)))
+            self.maxlen = int(float(config.settings.get('other_len', 80)))
             self.jianfan = False
 
         if not tools.vail_file(self.audio_file):

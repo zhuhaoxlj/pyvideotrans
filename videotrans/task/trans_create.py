@@ -882,26 +882,19 @@ class TransCreate(BaseTask):
 
             srt_string = ""
             for i, it in enumerate(target_sub_list):
-                # 硬字幕换行，软字幕无需处理
-                tmp = tools.textwrap(it['text'].strip(), maxlen) if self.cfg['subtitle_type'] == 3 else  it['text'].strip()
+                # 直接使用原始字幕，不进行textwrap换行，通过ASS的margin控制显示范围
+                tmp = it['text'].strip()
                 srt_string += f"{it['line']}\n{it['time']}\n{tmp}"
                 if source_length > 0 and i < source_length:
-                    srt_string += "\n" + (
-                        tools.textwrap(source_sub_list[i]['text'], maxlen_source).strip() if
-                        self.cfg['subtitle_type'] == 3 else source_sub_list[i]['text'])
+                    srt_string += "\n" + source_sub_list[i]['text']
                 srt_string += "\n\n"
             process_end_subtitle = f"{self.cfg['cache_folder']}/shuang.srt"
             with Path(process_end_subtitle).open('w', encoding='utf-8') as f:
                 f.write(srt_string.strip())
             shutil.copy2(process_end_subtitle, self.cfg['target_dir'] + "/shuang.srt")
         elif self.cfg['subtitle_type'] == 1:
-            # 单硬字幕，需处理字符数换行
-            srt_string = ""
-            for i, it in enumerate(target_sub_list):
-                tmp = tools.textwrap(it['text'].strip(), maxlen)
-                srt_string += f"{it['line']}\n{it['time']}\n{tmp.strip()}\n\n"
-            with Path(process_end_subtitle).open('w', encoding='utf-8') as f:
-                f.write(srt_string)
+            # 单硬字幕 - 直接使用原始字幕，不进行textwrap换行，通过ASS的margin控制显示范围
+            shutil.copy2(self.cfg['target_sub'], process_end_subtitle)
         else:
             # 单软字幕
             basename = os.path.basename(self.cfg['target_sub'])

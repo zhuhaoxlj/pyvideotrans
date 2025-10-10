@@ -749,12 +749,19 @@ class WinAction(WinActionSub):
 
     def click_subtitle(self):
         from videotrans.component.set_subtitles_length import SubtitleSettingsDialog
-        dialog = SubtitleSettingsDialog(self.main, config.settings.get('cjk_len', 24),
-                                        config.settings.get('other_len', 66))
+        dialog = SubtitleSettingsDialog(
+            self.main, 
+            config.settings.get('cjk_len', 40),
+            config.settings.get('other_len', 80),
+            config.settings.get('marginL', 50),
+            config.settings.get('marginR', 50)
+        )
         if dialog.exec():  # OK 按钮被点击时 exec 返回 True
-            cjk_value, other_value = dialog.get_values()
+            cjk_value, other_value, margin_l, margin_r = dialog.get_values()
             config.settings['cjk_len'] = cjk_value
             config.settings['other_len'] = other_value
+            config.settings['marginL'] = margin_l
+            config.settings['marginR'] = margin_r
             with  open(config.ROOT_DIR + "/videotrans/cfg.json", 'w', encoding='utf-8') as f:
                 f.write(json.dumps(config.settings, ensure_ascii=False))
 

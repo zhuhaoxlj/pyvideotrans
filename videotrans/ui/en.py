@@ -449,31 +449,33 @@ class Ui_MainWindow(object):
         self.label_cjklinenums = QtWidgets.QLabel(self.layoutWidget)
         self.label_cjklinenums.setObjectName("label_cjklinenums")
         self.label_cjklinenums.setText(
-            '中日韩单行字符' if config.defaulelang == 'zh' else 'Line length')
+            '中日韩显示宽度' if config.defaulelang == 'zh' else 'CJK Width')
 
         self.cjklinenums = QtWidgets.QSpinBox(self.layoutWidget)
 
-        self.cjklinenums.setMinimum(5)
-        self.cjklinenums.setMaximum(100)
+        self.cjklinenums.setMinimum(10)
+        self.cjklinenums.setMaximum(200)
         self.cjklinenums.setMinimumWidth(90)
         self.cjklinenums.setToolTip(
-            "中日韩字幕单行字符数" if config.defaulelang == 'zh' else 'Chinese/Japanese/Korean line length')
+            "中日韩字幕单行显示宽度(中文1字=2,英文1字=1,建议40)" if config.defaulelang == 'zh' 
+            else 'CJK subtitle display width (CJK char=2, Latin=1, suggest 40)')
         self.cjklinenums.setObjectName("cjklinenums")
-        self.cjklinenums.setValue(int(config.settings.get('cjk_len', 20)))
+        self.cjklinenums.setValue(int(config.settings.get('cjk_len', 40)))
 
         self.label_othlinenums = QtWidgets.QLabel(self.layoutWidget)
         self.label_othlinenums.setObjectName("label_othlinenums")
         self.label_othlinenums.setText(
-            '其他语言' if config.defaulelang == 'zh' else 'Ohter Line length')
+            '其他语言宽度' if config.defaulelang == 'zh' else 'Other Width')
 
         self.othlinenums = QtWidgets.QSpinBox(self.layoutWidget)
-        self.othlinenums.setMinimum(5)
+        self.othlinenums.setMinimum(10)
         self.othlinenums.setMinimumWidth(90)
-        self.othlinenums.setMaximum(100)
+        self.othlinenums.setMaximum(200)
         self.othlinenums.setToolTip(
-            "其他语言字幕单行字符数" if config.defaulelang == 'zh' else 'Number of characters per line for subtitles in other languages')
+            "其他语言字幕单行显示宽度(英文1字=1,中文1字=2,建议80)" if config.defaulelang == 'zh' 
+            else 'Other language display width (Latin=1, CJK=2, suggest 80)')
         self.othlinenums.setObjectName("othlinenums")
-        self.othlinenums.setValue(int(config.settings.get('other_len', 60)))
+        self.othlinenums.setValue(int(config.settings.get('other_len', 80)))
 
         self.gaoji_layout_inner.addWidget(self.voice_autorate)
         self.gaoji_layout_inner.addWidget(self.video_autorate)

@@ -2,6 +2,7 @@
 import copy
 import os
 import re
+import unicodedata
 from datetime import timedelta
 
 
@@ -311,33 +312,73 @@ def set_ass_font(srtfile=None):
         f.write("".join(ass_str))
     return assfile
 
+def get_char_display_width(char):
+    """
+    计算单个字符的显示宽度
+    - 全角字符（中文、日文、韩文等）：宽度为2
+    - 半角字符（英文、数字等）：宽度为1
+    
+    Args:
+        char: 单个字符
+    
+    Returns:
+        字符的显示宽度（1或2）
+    """
+    # 使用 unicodedata.east_asian_width() 判断字符宽度
+    # 'F' (Fullwidth), 'W' (Wide) 为全角字符
+    # 'Na' (Narrow), 'H' (Halfwidth), 'N' (Neutral) 为半角字符
+    # 'A' (Ambiguous) 根据上下文，这里当作全角处理
+    width_type = unicodedata.east_asian_width(char)
+    if width_type in ('F', 'W', 'A'):
+        return 2
+    return 1
+
+
+def get_text_display_width(text):
+    """
+    计算文本的总显示宽度
+    
+    Args:
+        text: 文本字符串
+    
+    Returns:
+        文本的总显示宽度
+    """
+    return sum(get_char_display_width(char) for char in text)
+
+
 def textwrap(text, maxlen=15):
     """
-    0. 如果text长度小于maxlen则直接返回。
+    基于字符显示宽度的智能换行函数
+    
+    0. 如果text显示宽度小于maxlen则直接返回。
     1. text预先移除所有换行符。
-    2. 达到maxlen处，如果当前字符是标点，则在此分组。否则向后查找最多4个字符，
+    2. 达到maxlen宽度处，如果当前字符是标点，则在此分组。否则向后查找最多4个字符，
        在找到的第一个标点处分组。如果都未找到，则在maxlen处硬分割。
-    3. 如果分组数大于1，且最后一组长度小于3，则将最后一组合并到前一组。
+    3. 如果分组数大于1，且最后一组显示宽度小于6，则将最后一组合并到前一组。
     4. 最后将所有分组使用换行符连接后返回。
 
     Args:
       text: 需要处理的输入字符串。
-      maxlen: 每组的目标最大长度，默认为 15。
+      maxlen: 每组的目标最大显示宽度（不是字符数），默认为 15。
+             注意：对于中英混合文本，这个值应该适当增大。
+             建议：中文为主的字幕 maxlen=40（约20个中文字符）
+                  英文为主的字幕 maxlen=80（约80个英文字符）
 
     Returns:
       处理过的、用换行符连接的字符串。
     """
     # 标点和空格列表
     flag = [
-        ",", ".", "?", "!", ";",
-        "，", "。", "？", "；", "！", " "
+        ",", ".", "?", "!", ";", ":",
+        "，", "。", "？", "；", "！", "：", " "
     ]
 
     # 1. 移除所有换行符
     text = text.replace('\n', '').replace('\r', '')
 
-    # 0. 如果文本长度小于等于 maxlen，直接返回
-    if len(text) <= maxlen:
+    # 0. 如果文本显示宽度小于等于 maxlen，直接返回
+    if get_text_display_width(text) <= maxlen:
         return text
 
     groups = []
@@ -345,35 +386,59 @@ def textwrap(text, maxlen=15):
     text_len = len(text)
 
     while cursor < text_len:
-        # 如果剩余文本不足 maxlen，则全部作为最后一组
-        if text_len - cursor <= maxlen:
+        # 计算从 cursor 开始的累计显示宽度
+        current_width = 0
+        break_pos = cursor
+        
+        # 找到第一个超过 maxlen 的位置
+        for i in range(cursor, text_len):
+            char_width = get_char_display_width(text[i])
+            if current_width + char_width > maxlen:
+                break_pos = i
+                break
+            current_width += char_width
+        else:
+            # 剩余文本全部不超过 maxlen
             groups.append(text[cursor:])
             break
 
-        # 2. 智能分组逻辑
+        # 如果刚好一个字符都放不下（全角字符且maxlen太小），强制放入
+        if break_pos == cursor:
+            groups.append(text[cursor])
+            cursor += 1
+            continue
+
+        # 2. 智能分组逻辑：在标点处断开
         break_point = -1
-
-        # 确定查找标点的范围，从 maxlen 位置开始，向后最多看4个字符
-        # 例如 maxlen=15, cursor=0, 则查找索引为 15, 16, 17, 18, 19 的字符
-        search_range = range(cursor + maxlen, min(cursor + maxlen + 5, text_len))
-
         found_flag = False
-        for i in search_range:
+        
+        # 优先从 break_pos 向前查找最近的标点（最多回退10个字符）
+        search_start = max(cursor + 1, break_pos - 10)
+        for i in range(break_pos - 1, search_start - 1, -1):
             if text[i] in flag:
-                # 找到标点，断点设置为标点之后
                 break_point = i + 1
                 found_flag = True
                 break
 
-        # 如果在查找范围内没有找到标点，则在 maxlen 处硬分割
+        # 如果向前没找到标点，尝试向后查找（但限制在maxlen的10%以内）
         if not found_flag:
-            break_point = cursor + maxlen
+            max_overflow = max(3, int(maxlen * 0.1))  # 允许最多超出10%或3个字符
+            search_end = min(break_pos + max_overflow, text_len)
+            for i in range(break_pos, search_end):
+                if text[i] in flag:
+                    break_point = i + 1
+                    found_flag = True
+                    break
+
+        # 如果都没找到标点，就在 break_pos 处硬分割
+        if not found_flag:
+            break_point = break_pos
 
         groups.append(text[cursor:break_point])
         cursor = break_point
 
-    # 3. 如果分组大于1，并且最后一组长度小于3，则合并
-    if len(groups) > 1 and len(groups[-1]) < 3:
+    # 3. 如果分组大于1，并且最后一组显示宽度太小，则合并到前一组
+    if len(groups) > 1 and get_text_display_width(groups[-1]) < 6:
         groups[-2] += groups[-1]
         groups.pop()
 

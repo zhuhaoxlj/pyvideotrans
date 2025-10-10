@@ -276,14 +276,14 @@ def parse_init(update_data=None):
         "subtitle_position": 2,  # 对应 1到9 位置
 
         "marginV": 10,
-        "marginL": 10,
-        "marginR": 10,
+        "marginL": 50,  # 增加左边距，让字幕有更多横向空间
+        "marginR": 50,  # 增加右边距，让字幕有更多横向空间
         "outline": 1,
         "shadow": 1,
         "borderStyle": 1,  # 1或3， 轮廓描边风格对应 BorderStyle=1， 背景色块风格对应 BorderStyle=3
 
-        "cjk_len": 20,
-        "other_len": 80,
+        "cjk_len": 40,  # 显示宽度（约20个中文字符或40个英文字符）
+        "other_len": 80,  # 显示宽度（约40个中文字符或80个英文字符）
         "gemini_model": DEFAULT_GEMINI_MODEL,
         "llm_chunk_size": 500,
         "llm_ai_type": "openai",
