@@ -214,6 +214,18 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.action_hebingsrt.setText('合并两个字幕' if config.defaulelang == 'zh' else 'Combine Two Subtitles')
         self.action_hebingsrt.setToolTip(
             '将2个字幕文件合并为一个，组成双语字幕' if config.defaulelang == 'zh' else 'Combine 2 subtitle files into one to form bilingual subtitles')
+        
+        self.action_splitsrt.setText('字幕智能断句' if config.defaulelang == 'zh' else 'Smart Subtitle Splitter')
+        self.action_splitsrt.setToolTip(
+            '将长字幕智能分割成短句，让每次只显示一句话' if config.defaulelang == 'zh' else 'Split long subtitles into short sentences intelligently')
+        
+        self.action_smartsplit.setText('AI智能字幕生成' if config.defaulelang == 'zh' else 'AI Smart Subtitle Generator')
+        self.action_smartsplit.setToolTip(
+            '基于词级时间戳的AI智能字幕生成和断句' if config.defaulelang == 'zh' else 'AI subtitle generation with word-level timestamps')
+        
+        self.action_llmsplit.setText('🤖 LLM智能字幕生成' if config.defaulelang == 'zh' else '🤖 LLM Smart Subtitle Generator')
+        self.action_llmsplit.setToolTip(
+            '使用大语言模型理解语义，生成专业级字幕（推荐）' if config.defaulelang == 'zh' else 'Use LLM to understand semantics and generate professional subtitles (Recommended)')
 
         self.action_clearcache.setText("Clear Cache" if config.defaulelang != 'zh' else '清理缓存和配置')
 
@@ -542,6 +554,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.actionformatcover.triggered.connect(lambda: winform.get_win('fn_formatcover').openwin())
         self.actionsubtitlescover.triggered.connect(lambda: winform.get_win('fn_subtitlescover').openwin())
         self.action_hebingsrt.triggered.connect(lambda: winform.get_win('fn_hebingsrt').openwin())
+        self.action_splitsrt.triggered.connect(lambda: winform.get_win('fn_split_srt').openwin())
+        self.action_smartsplit.triggered.connect(lambda: winform.get_win('fn_smart_split').openwin())
+        self.action_llmsplit.triggered.connect(lambda: winform.get_win('fn_llm_split').openwin())
         self.action_yinshipinfenli.triggered.connect(lambda: winform.get_win('fn_audiofromvideo').openwin())
         self.action_hun.triggered.connect(lambda: winform.get_win('fn_hunliu').openwin())
         self.action_yingyinhebing.triggered.connect(lambda: winform.get_win('fn_vas').openwin())

@@ -87,7 +87,9 @@ def openwin():
             winobj.fanyi_import.setDisabled(False)
         # 挨个从顶部添加已翻译后的文字
         elif d['type'] == 'subtitle':
-            winobj.fanyi_targettext.moveCursor(QTextCursor.End)
+            # 安全地将光标移到文本末尾
+            if winobj.fanyi_targettext.toPlainText():
+                winobj.fanyi_targettext.moveCursor(QTextCursor.End)
             winobj.fanyi_targettext.insertPlainText(d['text'])
         elif d['type'] == 'replace':
             winobj.fanyi_targettext.clear()

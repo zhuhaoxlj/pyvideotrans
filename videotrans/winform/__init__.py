@@ -20,7 +20,8 @@ _module_map = {
     "zhipuai": ".zhipuai", "siliconflow": ".siliconflow", "kokoro": ".kokoro",
     "parakeet": ".parakeet", "chatterbox": ".chatterbox", "deepseek": ".deepseek",
     "openrouter": ".openrouter", "fn_peiyinrole": ".fn_peiyinrole", "qwentts": ".qwentts",
-    "qwenmt":".qwenmt"
+    "qwenmt": ".qwenmt", "fn_split_srt": ".fn_split_srt", "fn_smart_split": ".fn_smart_split",
+    "fn_llm_split": ".fn_llm_split"
 }
 
 _loaded_modules = {}  # 用于缓存已经加载过的模块

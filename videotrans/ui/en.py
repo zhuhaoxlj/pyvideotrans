@@ -803,6 +803,15 @@ class Ui_MainWindow(object):
         self.action_fanyi.setObjectName("action_fanyi")
         self.action_hebingsrt = QtGui.QAction(MainWindow)
         self.action_hebingsrt.setObjectName("action_hebingsrt")
+        
+        self.action_splitsrt = QtGui.QAction(MainWindow)
+        self.action_splitsrt.setObjectName("action_splitsrt")
+        
+        self.action_smartsplit = QtGui.QAction(MainWindow)
+        self.action_smartsplit.setObjectName("action_smartsplit")
+        
+        self.action_llmsplit = QtGui.QAction(MainWindow)
+        self.action_llmsplit.setObjectName("action_llmsplit")
 
         self.action_clearcache = QtGui.QAction(MainWindow)
         self.action_clearcache.setObjectName("action_clearcache")
@@ -941,6 +950,12 @@ class Ui_MainWindow(object):
         self.menu.addAction(self.action_hun)
         self.menu.addSeparator()
         self.menu.addAction(self.action_hebingsrt)
+        self.menu.addSeparator()
+        self.menu.addAction(self.action_splitsrt)
+        self.menu.addSeparator()
+        self.menu.addAction(self.action_smartsplit)
+        self.menu.addSeparator()
+        self.menu.addAction(self.action_llmsplit)
         self.menu.addSeparator()
         self.menu.addAction(self.actionsepar)
         self.menu.addSeparator()

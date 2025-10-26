@@ -52,6 +52,9 @@ from videotrans.ui.setini import Ui_setini
 from videotrans.ui.setlinerole import Ui_setlinerole
 from videotrans.ui.siliconflow import Ui_siliconflowform
 from videotrans.ui.srthebing import Ui_srthebing
+from videotrans.ui.splitsrt import Ui_splitsrt
+from videotrans.ui.smartsplit import Ui_smartsplit
+from videotrans.ui.llmsplit import Ui_llmsplit
 from videotrans.ui.stt import Ui_sttform
 from videotrans.ui.subtitlescover import Ui_subtitlescover
 from videotrans.ui.tencent import Ui_tencentform
@@ -478,6 +481,27 @@ class ZijiehuoshanForm(QDialog, Ui_zijiehuoshanform):  # <===
 class HebingsrtForm(QtWidgets.QWidget, Ui_srthebing):  # <===
     def __init__(self, parent=None):
         super(HebingsrtForm, self).__init__(parent)
+        self.setupUi(self)
+        self.setWindowIcon(QIcon(f"{config.ROOT_DIR}/videotrans/styles/icon.ico"))
+
+
+class SplitSrtForm(QtWidgets.QWidget, Ui_splitsrt):  # <===
+    def __init__(self, parent=None):
+        super(SplitSrtForm, self).__init__(parent)
+        self.setupUi(self)
+        self.setWindowIcon(QIcon(f"{config.ROOT_DIR}/videotrans/styles/icon.ico"))
+
+
+class SmartSplitForm(QtWidgets.QWidget, Ui_smartsplit):  # <===
+    def __init__(self, parent=None):
+        super(SmartSplitForm, self).__init__(parent)
+        self.setupUi(self)
+        self.setWindowIcon(QIcon(f"{config.ROOT_DIR}/videotrans/styles/icon.ico"))
+
+
+class LLMSplitForm(QtWidgets.QWidget, Ui_llmsplit):  # <===
+    def __init__(self, parent=None):
+        super(LLMSplitForm, self).__init__(parent)
         self.setupUi(self)
         self.setWindowIcon(QIcon(f"{config.ROOT_DIR}/videotrans/styles/icon.ico"))
 

@@ -979,7 +979,9 @@ class WinAction(WinActionSub):
         elif d['type'] == "subtitle" and config.current_status == 'ing' and (
                 self.is_batch or config.task_countdown <= 0):
             if self.is_batch or (not self.is_batch and self.edit_subtitle_type == 'edit_subtitle_source'):
-                self.main.subtitle_area.moveCursor(QTextCursor.End)
+                # 安全地将光标移到文本末尾
+                if self.main.subtitle_area.toPlainText():
+                    self.main.subtitle_area.moveCursor(QTextCursor.End)
                 self.main.subtitle_area.insertPlainText(d['text'])
         elif d['type'] == 'edit_subtitle_source' or d['type'] == 'edit_subtitle_target':
             self.wait_subtitle = d['text']

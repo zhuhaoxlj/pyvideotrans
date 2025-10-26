@@ -254,7 +254,7 @@ def runffmpeg(arg, *, noextname=None, uuid=None, force_cpu=False):
 
     if cmd and Path(cmd[-1]).suffix:
         try:
-            cmd[-1] = Path(cmd[-1]).as_posix()
+            cmd[-1] = Path(cmd[-1]).resolve().as_posix()
         except Exception:
             pass
 
@@ -463,7 +463,7 @@ def _run_ffprobe_internal(cmd: list[str]) -> str:
     """
     # 确保文件路径参数已转换为 POSIX 风格字符串，以获得更好的兼容性
     if Path(cmd[-1]).is_file():
-        cmd[-1] = Path(cmd[-1]).as_posix()
+        cmd[-1] = Path(cmd[-1]).resolve().as_posix()
 
     command = [config.FFPROBE_BIN] + [str(arg) for arg in cmd]
     creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
@@ -616,14 +616,14 @@ def conver_to_16k(audio, target_audio):
     return runffmpeg([
         "-y",
         "-i",
-        Path(audio).as_posix(),
+        Path(audio).resolve().as_posix(),
         "-ac",
         "1",
         "-ar",
         "16000",
         "-c:a",
         "pcm_s16le",
-        Path(target_audio).as_posix(),
+        Path(target_audio).resolve().as_posix(),
     ])
 
 
@@ -632,12 +632,12 @@ def wav2m4a(wavfile, m4afile, extra=None):
     cmd = [
         "-y",
         "-i",
-        Path(wavfile).as_posix(),
+        Path(wavfile).resolve().as_posix(),
         "-c:a",
         "aac",
         "-b:a",
         "128k",
-        Path(m4afile).as_posix()
+        Path(m4afile).resolve().as_posix()
     ]
     if extra:
         cmd = cmd[:3] + extra + cmd[3:]
@@ -674,7 +674,7 @@ def create_concat_txt(filelist, concat_txt=None):
 # 多个音频片段连接
 def concat_multi_audio(*, out=None, concat_txt=None):
     if out:
-        out = Path(out).as_posix()
+        out = Path(out).resolve().as_posix()
 
     os.chdir(os.path.dirname(concat_txt))
     cmd = ['-y', '-f', 'concat', '-safe', '0', '-i', concat_txt, "-b:a", "128k"]

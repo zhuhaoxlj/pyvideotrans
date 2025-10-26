@@ -78,7 +78,9 @@ def openwin():
             winobj.shibie_text.clear()
             winobj.shibie_text.insertPlainText(d["text"])
         elif d['type'] == 'subtitle':
-            winobj.shibie_text.moveCursor(QTextCursor.End)
+            # 安全地将光标移到文本末尾
+            if winobj.shibie_text.toPlainText():
+                winobj.shibie_text.moveCursor(QTextCursor.End)
             winobj.shibie_text.insertPlainText(d['text'])
         elif d['type'] == 'error':
             winobj.loglabel.setToolTip('点击查看详细出错信息' if config.defaulelang == 'zh' else 'View  details error')
