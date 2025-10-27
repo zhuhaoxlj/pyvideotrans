@@ -674,6 +674,7 @@ DO NOT include explanations, only return the JSON array."""
             """调用 SiliconFlow API (流式传输)"""
             import requests
             import json
+            import time
             
             url = 'https://api.siliconflow.cn/v1/chat/completions'
             
@@ -693,42 +694,114 @@ DO NOT include explanations, only return the JSON array."""
                 'stream': True  # 启用流式传输
             }
             
-            response = requests.post(url, headers=headers, json=data, stream=True, timeout=120)
-            response.raise_for_status()
+            # 日志：准备发送请求
+            self.post(type='logs', text=f'   🌐 连接到: {url}')
+            self.post(type='logs', text=f'   📦 模型: {data["model"]}')
+            self.post(type='logs', text=f'   📝 Prompt 长度: {len(prompt)} 字符')
+            
+            try:
+                # 日志：开始发送请求
+                self.post(type='logs', text=f'   🔄 正在发送 HTTP 请求...')
+                request_start = time.time()
+                
+                response = requests.post(url, headers=headers, json=data, stream=True, timeout=120)
+                
+                # 日志：收到响应
+                request_time = time.time() - request_start
+                self.post(type='logs', text=f'   ✅ 收到响应！(耗时: {request_time:.2f}秒)')
+                self.post(type='logs', text=f'   📊 HTTP 状态码: {response.status_code}')
+                self.post(type='logs', text=f'   📋 响应头: {dict(response.headers)}')
+                
+                response.raise_for_status()
+                
+                # 日志：开始读取流
+                self.post(type='logs', text=f'   🔄 开始读取流式数据...')
+                
+            except requests.exceptions.Timeout:
+                self.post(type='logs', text=f'   ❌ 请求超时！(120秒)')
+                raise
+            except requests.exceptions.ConnectionError as e:
+                self.post(type='logs', text=f'   ❌ 连接错误: {str(e)}')
+                raise
+            except requests.exceptions.HTTPError as e:
+                self.post(type='logs', text=f'   ❌ HTTP 错误: {e.response.status_code}')
+                try:
+                    error_detail = e.response.json()
+                    self.post(type='logs', text=f'   📋 错误详情: {error_detail}')
+                except:
+                    self.post(type='logs', text=f'   📋 错误内容: {e.response.text[:500]}')
+                raise
+            except Exception as e:
+                self.post(type='logs', text=f'   ❌ 未知错误: {str(e)}')
+                raise
             
             full_content = []
             buffer = ""
+            line_count = 0
+            chunk_count = 0
+            content_count = 0
+            last_log_time = time.time()
+            first_content_received = False
             
             try:
                 for line in response.iter_lines():
+                    line_count += 1
+                    
                     if not line:
                         continue
                     
                     line = line.decode('utf-8')
+                    
+                    # 第一行数据时输出日志
+                    if line_count == 1:
+                        self.post(type='logs', text=f'   📥 收到第一行数据，开始流式输出...')
+                    
                     if line.startswith('data: '):
                         data_str = line[6:]  # 移除 "data: " 前缀
                         
                         if data_str == '[DONE]':
+                            self.post(type='logs', text=f'\n   🏁 流式传输完成！')
                             break
                         
                         try:
                             chunk = json.loads(data_str)
+                            chunk_count += 1
+                            
                             if 'choices' in chunk and len(chunk['choices']) > 0:
                                 delta = chunk['choices'][0].get('delta', {})
                                 content = delta.get('content', '')
                                 if content:
                                     full_content.append(content)
                                     buffer += content
+                                    content_count += len(content)
                                     
-                                    # 实时显示流式内容
+                                    # 第一次收到内容时提示
+                                    if not first_content_received:
+                                        self.post(type='logs', text=f'   ✨ LLM 开始生成内容：')
+                                        first_content_received = True
+                                    
+                                    # 实时显示流式内容（干净，不带心跳信息）
                                     self.post(type='stream', text=content)
-                        except json.JSONDecodeError:
+                            elif 'error' in chunk:
+                                self.post(type='logs', text=f'\n   ❌ API 返回错误: {chunk["error"]}')
+                                break
+                        except json.JSONDecodeError as e:
+                            # 只记录第一个解析错误
+                            if chunk_count < 3:
+                                self.post(type='logs', text=f'   ⚠️  JSON 解析失败，继续尝试...')
                             continue
             
             except Exception as e:
                 self.post(type='logs', text=f'\n   ⚠️  流式传输异常: {str(e)}')
+                import traceback
+                self.post(type='logs', text=f'   📋 错误堆栈: {traceback.format_exc()}')
             
-            return ''.join(full_content)
+            # 日志：总结
+            final_content = ''.join(full_content)
+            self.post(type='logs', text=f'   📊 接收统计: {chunk_count} 个数据块, {len(full_content)} 个内容片段')
+            self.post(type='logs', text=f'   📝 总内容长度: {len(final_content)} 字符')
+            
+            return final_content
         
         def _stream_openai(self, prompt):
             """调用 OpenAI API (流式传输)"""

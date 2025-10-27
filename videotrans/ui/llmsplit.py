@@ -5,7 +5,7 @@ from PySide6.QtCore import (QMetaObject, QSize, Qt, QUrl)
 from PySide6.QtGui import (QCursor, QDragEnterEvent, QDropEvent)
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit,
                                QPlainTextEdit, QPushButton, QComboBox, QCheckBox,
-                               QVBoxLayout, QGridLayout)
+                               QVBoxLayout, QGridLayout, QSplitter, QFrame)
 
 from videotrans.configure import config
 
@@ -63,19 +63,20 @@ class Ui_llmsplit(object):
         if not llmsplit.objectName():
             llmsplit.setObjectName(u"llmsplit")
         
-        # 获取屏幕可用高度
+        # 获取屏幕可用高度和宽度
         from PySide6.QtGui import QGuiApplication
         screen = QGuiApplication.primaryScreen()
         if screen:
             screen_geometry = screen.availableGeometry()
             screen_height = screen_geometry.height()
             screen_width = screen_geometry.width()
-            # 设置窗口大小：宽度900，高度为屏幕可用高度的95%（留一点边距）
+            # 设置窗口为全屏大小（留一点边距）
             window_height = int(screen_height * 0.95)
-            llmsplit.resize(900, window_height)
+            window_width = int(screen_width * 0.95)
+            llmsplit.resize(window_width, window_height)
         else:
             # 如果无法获取屏幕信息，使用默认值
-            llmsplit.resize(900, 800)
+            llmsplit.resize(1600, 900)
         
         llmsplit.setWindowModality(QtCore.Qt.NonModal)
 
@@ -85,19 +86,54 @@ class Ui_llmsplit(object):
         sizePolicy.setHeightForWidth(llmsplit.sizePolicy().hasHeightForWidth())
         llmsplit.setSizePolicy(sizePolicy)
         
-        # 设置最小尺寸，避免窗口太小
-        llmsplit.setMinimumSize(QSize(800, 600))
+        # 设置最小尺寸
+        llmsplit.setMinimumSize(QSize(1200, 700))
 
+        # 主布局
         self.horizontalLayout_main = QHBoxLayout(llmsplit)
         self.horizontalLayout_main.setObjectName(u"horizontalLayout_main")
-        self.verticalLayout = QVBoxLayout()
+        self.horizontalLayout_main.setContentsMargins(10, 10, 10, 10)
+        
+        # 创建分割器（左右分栏）
+        self.splitter = QSplitter(Qt.Horizontal, llmsplit)
+        self.splitter.setObjectName(u"splitter")
+        
+        # 检测系统主题（深色/浅色）
+        from PySide6.QtGui import QPalette
+        palette = llmsplit.palette()
+        is_dark_theme = palette.color(QPalette.Window).lightness() < 128
+        
+        # ================ 左侧面板：输入控件 ================
+        self.left_widget = QFrame()
+        self.left_widget.setFrameShape(QFrame.StyledPanel)
+        
+        # 根据主题设置背景色
+        if is_dark_theme:
+            left_bg_color = "#2b2b2b"  # 深色主题
+            self.left_widget.setStyleSheet(f"QFrame {{ background-color: {left_bg_color}; border-radius: 5px; }}")
+        else:
+            left_bg_color = "#f5f5f5"  # 浅色主题
+            self.left_widget.setStyleSheet(f"QFrame {{ background-color: {left_bg_color}; border-radius: 5px; }}")
+        
+        self.verticalLayout = QVBoxLayout(self.left_widget)
         self.verticalLayout.setObjectName(u"verticalLayout")
+        self.verticalLayout.setContentsMargins(15, 15, 15, 15)
+        
+        # 保存主题信息供后续使用
+        self.is_dark_theme = is_dark_theme
         
         # 添加说明标签
         self.info_label = QLabel(llmsplit)
         self.info_label.setObjectName(u"info_label")
         self.info_label.setWordWrap(True)
-        self.info_label.setStyleSheet("QLabel { background-color: #e3f2fd; color: #1a237e; padding: 12px; border-radius: 5px; border: 2px solid #2196f3; }")
+        
+        # 根据主题设置 info_label 样式
+        if is_dark_theme:
+            info_style = "QLabel { background-color: #1e3a5f; color: #90caf9; padding: 12px; border-radius: 5px; border: 2px solid #2196f3; }"
+        else:
+            info_style = "QLabel { background-color: #e3f2fd; color: #1a237e; padding: 12px; border-radius: 5px; border: 2px solid #2196f3; }"
+        
+        self.info_label.setStyleSheet(info_style)
         self.verticalLayout.addWidget(self.info_label)
         
         # 文件选择区域 - 只保留按钮，支持拖放和点击
@@ -113,13 +149,17 @@ class Ui_llmsplit(object):
         self.videoinput = QLabel(llmsplit)
         self.videoinput.setObjectName(u"videoinput")
         self.videoinput.setWordWrap(True)
-        self.videoinput.setStyleSheet("QLabel { color: #2196f3; padding: 5px; }")
+        # 适配主题的文件路径颜色
+        video_input_color = "#64b5f6" if is_dark_theme else "#2196f3"
+        self.videoinput.setStyleSheet(f"QLabel {{ color: {video_input_color}; padding: 5px; }}")
         self.verticalLayout.addWidget(self.videoinput)
         
         # 使用现有字幕选项
         self.use_existing_srt_checkbox = QCheckBox(llmsplit)
         self.use_existing_srt_checkbox.setObjectName(u"use_existing_srt_checkbox")
-        self.use_existing_srt_checkbox.setStyleSheet("QCheckBox { font-weight: bold; color: #ff6f00; }")
+        # 适配主题的复选框颜色
+        checkbox_color = "#ffab40" if is_dark_theme else "#ff6f00"
+        self.use_existing_srt_checkbox.setStyleSheet(f"QCheckBox {{ font-weight: bold; color: {checkbox_color}; }}")
         self.verticalLayout.addWidget(self.use_existing_srt_checkbox)
         
         # 字幕文件选择区域（默认隐藏）- 只保留按钮，支持拖放和点击
@@ -136,14 +176,18 @@ class Ui_llmsplit(object):
         self.srtinput = QLabel(llmsplit)
         self.srtinput.setObjectName(u"srtinput")
         self.srtinput.setWordWrap(True)
-        self.srtinput.setStyleSheet("QLabel { color: #2196f3; padding: 5px; }")
+        # 适配主题的文件路径颜色
+        srt_input_color = "#64b5f6" if is_dark_theme else "#2196f3"
+        self.srtinput.setStyleSheet(f"QLabel {{ color: {srt_input_color}; padding: 5px; }}")
         self.srtinput.setVisible(False)
         self.verticalLayout.addWidget(self.srtinput)
         
         # 使用 LLM 优化选项
         self.use_llm_checkbox = QCheckBox(llmsplit)
         self.use_llm_checkbox.setObjectName(u"use_llm_checkbox")
-        self.use_llm_checkbox.setStyleSheet("QCheckBox { font-weight: bold; color: #1976d2; font-size: 14px; }")
+        # 适配主题的复选框颜色
+        llm_checkbox_color = "#64b5f6" if is_dark_theme else "#1976d2"
+        self.use_llm_checkbox.setStyleSheet(f"QCheckBox {{ font-weight: bold; color: {llm_checkbox_color}; font-size: 14px; }}")
         self.use_llm_checkbox.setChecked(True)  # 默认启用
         self.verticalLayout.addWidget(self.use_llm_checkbox)
         
@@ -329,50 +373,123 @@ class Ui_llmsplit(object):
         
         self.verticalLayout.addLayout(self.horizontalLayout_params)
         
-        # 日志区域标签
-        self.log_title = QLabel(llmsplit)
+        # 左侧添加一个弹性空间，将控件推到上方
+        self.verticalLayout.addStretch()
+        
+        # 将左侧 widget 添加到分割器
+        self.splitter.addWidget(self.left_widget)
+        
+        # ================ 右侧面板：日志和结果 ================
+        self.right_widget = QFrame()
+        self.right_widget.setFrameShape(QFrame.StyledPanel)
+        
+        # 根据主题设置右侧背景色
+        if is_dark_theme:
+            right_bg_color = "#1e1e1e"  # 深色主题
+            self.right_widget.setStyleSheet(f"QFrame {{ background-color: {right_bg_color}; border-radius: 5px; }}")
+        else:
+            right_bg_color = "#ffffff"  # 浅色主题
+            self.right_widget.setStyleSheet(f"QFrame {{ background-color: {right_bg_color}; border-radius: 5px; }}")
+        
+        self.right_layout = QVBoxLayout(self.right_widget)
+        self.right_layout.setObjectName(u"right_layout")
+        self.right_layout.setContentsMargins(15, 15, 15, 15)
+        self.right_layout.setSpacing(10)
+        
+        # --------- 上半部分：处理日志 ---------
+        self.log_title = QLabel(self.right_widget)
         self.log_title.setObjectName(u"log_title")
-        self.log_title.setStyleSheet("QLabel { font-weight: bold; margin-top: 10px; font-size: 13px; }")
-        self.verticalLayout.addWidget(self.log_title)
+        # 标题颜色适配主题
+        log_title_color = "#64b5f6" if is_dark_theme else "#1976d2"
+        self.log_title.setStyleSheet(f"QLabel {{ font-weight: bold; font-size: 15px; color: {log_title_color}; }}")
+        self.right_layout.addWidget(self.log_title)
 
-        # 日志显示区域
-        self.loglabel = QPlainTextEdit(llmsplit)
+        # 日志显示区域（占右侧上半部分）
+        self.loglabel = QPlainTextEdit(self.right_widget)
         self.loglabel.setObjectName(u"loglabel")
         self.loglabel.setReadOnly(True)
-        self.loglabel.setMaximumHeight(150)
-        self.loglabel.setFocusPolicy(Qt.NoFocus)  # 禁用焦点，避免光标错误
-        self.loglabel.setStyleSheet("QPlainTextEdit { background-color: #263238; color: #aed581; font-family: 'Consolas', 'Monaco', monospace; }")
-        self.verticalLayout.addWidget(self.loglabel)
+        self.loglabel.setFocusPolicy(Qt.NoFocus)
         
-        # 结果预览标签
-        self.result_title = QLabel(llmsplit)
+        # 日志区域样式适配主题（保持深色终端风格，但微调）
+        if is_dark_theme:
+            log_style = "QPlainTextEdit { background-color: #1a1a1a; color: #aed581; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; padding: 10px; border-radius: 5px; border: 1px solid #3a3a3a; }"
+        else:
+            log_style = "QPlainTextEdit { background-color: #263238; color: #aed581; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; padding: 10px; border-radius: 5px; }"
+        
+        self.loglabel.setStyleSheet(log_style)
+        self.right_layout.addWidget(self.loglabel, 1)  # 权重为 1
+        
+        # --------- 下半部分：生成的字幕 ---------
+        self.result_title = QLabel(self.right_widget)
         self.result_title.setObjectName(u"result_title")
-        self.result_title.setStyleSheet("QLabel { font-weight: bold; margin-top: 10px; font-size: 13px; }")
-        self.verticalLayout.addWidget(self.result_title)
+        # 标题颜色适配主题
+        result_title_color = "#81c784" if is_dark_theme else "#4caf50"
+        self.result_title.setStyleSheet(f"QLabel {{ font-weight: bold; font-size: 15px; color: {result_title_color}; margin-top: 10px; }}")
+        self.right_layout.addWidget(self.result_title)
 
-        # 结果预览区域
-        self.resultinput = QPlainTextEdit(llmsplit)
+        # 结果预览区域（占右侧下半部分）
+        self.resultinput = QPlainTextEdit(self.right_widget)
         self.resultinput.setObjectName(u"resultinput")
         self.resultinput.setReadOnly(True)
-        self.resultinput.setFocusPolicy(Qt.NoFocus)  # 禁用焦点，避免光标错误
-        self.verticalLayout.addWidget(self.resultinput)
+        self.resultinput.setFocusPolicy(Qt.NoFocus)
+        
+        # 结果区域样式适配主题
+        if is_dark_theme:
+            result_style = "QPlainTextEdit { background-color: #2b2b2b; color: #e0e0e0; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; padding: 10px; border: 1px solid #3a3a3a; border-radius: 5px; }"
+        else:
+            result_style = "QPlainTextEdit { background-color: #f9f9f9; color: #212121; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; padding: 10px; border: 1px solid #e0e0e0; border-radius: 5px; }"
+        
+        self.resultinput.setStyleSheet(result_style)
+        self.right_layout.addWidget(self.resultinput, 1)  # 权重为 1
 
+        # 结果文件路径和打开按钮的布局
+        self.result_bottom_layout = QHBoxLayout()
+        
         # 结果文件路径
-        self.resultlabel = QLabel(llmsplit)
+        self.resultlabel = QLabel(self.right_widget)
         self.resultlabel.setObjectName(u"resultlabel")
         self.resultlabel.setWordWrap(True)
-        self.resultlabel.setStyleSheet("QLabel { color: green; font-weight: bold; }")
-        self.verticalLayout.addWidget(self.resultlabel)
+        # 适配主题的颜色
+        result_label_color = "#81c784" if is_dark_theme else "#4caf50"
+        self.resultlabel.setStyleSheet(f"QLabel {{ color: {result_label_color}; font-weight: bold; }}")
+        self.result_bottom_layout.addWidget(self.resultlabel, 1)
 
         # 打开目录按钮
-        self.resultbtn = QPushButton(llmsplit)
+        self.resultbtn = QPushButton(self.right_widget)
         self.resultbtn.setObjectName(u"resultbtn")
-        self.resultbtn.setMinimumSize(QSize(0, 35))
+        self.resultbtn.setMinimumSize(QSize(150, 40))
         self.resultbtn.setCursor(QCursor(Qt.PointingHandCursor))
         self.resultbtn.setDisabled(True)
-        self.verticalLayout.addWidget(self.resultbtn)
-
-        self.horizontalLayout_main.addLayout(self.verticalLayout)
+        self.resultbtn.setStyleSheet("""
+            QPushButton { 
+                background-color: #4caf50; 
+                color: white; 
+                font-size: 13px;
+                font-weight: bold;
+                border-radius: 5px;
+                padding: 8px 15px;
+            } 
+            QPushButton:hover { 
+                background-color: #45a049; 
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        self.result_bottom_layout.addWidget(self.resultbtn)
+        
+        self.right_layout.addLayout(self.result_bottom_layout)
+        
+        # 将右侧 widget 添加到分割器
+        self.splitter.addWidget(self.right_widget)
+        
+        # 设置分割器的初始比例（左:右 = 1:1）
+        self.splitter.setSizes([800, 800])
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 1)
+        
+        # 将分割器添加到主布局
+        self.horizontalLayout_main.addWidget(self.splitter)
 
         self.retranslateUi(llmsplit)
 
