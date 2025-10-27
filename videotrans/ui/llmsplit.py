@@ -1,8 +1,8 @@
 # LLM智能字幕断句 UI - 基于语义理解
 
 from PySide6 import QtCore, QtWidgets
-from PySide6.QtCore import (QMetaObject, QSize, Qt)
-from PySide6.QtGui import (QCursor)
+from PySide6.QtCore import (QMetaObject, QSize, Qt, QUrl)
+from PySide6.QtGui import (QCursor, QDragEnterEvent, QDropEvent)
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit,
                                QPlainTextEdit, QPushButton, QComboBox, QCheckBox,
                                QVBoxLayout, QGridLayout)
@@ -10,19 +10,83 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit,
 from videotrans.configure import config
 
 
+class DragDropButton(QPushButton):
+    """支持拖放文件的按钮，拖入文件时会高亮显示"""
+    
+    def __init__(self, text="", parent=None, file_filter=None):
+        super().__init__(text, parent)
+        self.setAcceptDrops(True)
+        self.file_filter = file_filter or []  # 允许的文件扩展名列表
+        self._original_style = ""
+        self.selected_file = ""
+        
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """拖入事件 - 文件进入按钮区域时高亮显示"""
+        if event.mimeData().hasUrls():
+            # 检查是否是本地文件
+            urls = event.mimeData().urls()
+            if urls and urls[0].isLocalFile():
+                file_path = urls[0].toLocalFile()
+                # 如果没有指定过滤器，或者文件符合过滤器
+                if not self.file_filter or any(file_path.lower().endswith(ext) for ext in self.file_filter):
+                    event.acceptProposedAction()
+                    # 高亮显示：更明显的绿色边框和背景
+                    self._original_style = self.styleSheet()
+                    self.setStyleSheet(self._original_style + " QPushButton { border: 3px dashed #4caf50; background-color: #4caf50; }")
+                    return
+        event.ignore()
+    
+    def dragLeaveEvent(self, event):
+        """拖出事件 - 文件离开按钮区域时恢复原样"""
+        self.setStyleSheet(self._original_style)
+    
+    def dropEvent(self, event: QDropEvent):
+        """放下事件 - 文件被放下时设置文件路径"""
+        self.setStyleSheet(self._original_style)
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if urls and urls[0].isLocalFile():
+                file_path = urls[0].toLocalFile()
+                # 如果没有指定过滤器，或者文件符合过滤器
+                if not self.file_filter or any(file_path.lower().endswith(ext) for ext in self.file_filter):
+                    self.selected_file = file_path
+                    event.acceptProposedAction()
+                    # 触发点击事件，通知外部文件已选择
+                    self.clicked.emit()
+                    return
+        event.ignore()
+
+
 class Ui_llmsplit(object):
     def setupUi(self, llmsplit):
         self.has_done = False
         if not llmsplit.objectName():
             llmsplit.setObjectName(u"llmsplit")
-        llmsplit.resize(900, 800)
+        
+        # 获取屏幕可用高度
+        from PySide6.QtGui import QGuiApplication
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            screen_geometry = screen.availableGeometry()
+            screen_height = screen_geometry.height()
+            screen_width = screen_geometry.width()
+            # 设置窗口大小：宽度900，高度为屏幕可用高度的95%（留一点边距）
+            window_height = int(screen_height * 0.95)
+            llmsplit.resize(900, window_height)
+        else:
+            # 如果无法获取屏幕信息，使用默认值
+            llmsplit.resize(900, 800)
+        
         llmsplit.setWindowModality(QtCore.Qt.NonModal)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(llmsplit.sizePolicy().hasHeightForWidth())
         llmsplit.setSizePolicy(sizePolicy)
+        
+        # 设置最小尺寸，避免窗口太小
+        llmsplit.setMinimumSize(QSize(800, 600))
 
         self.horizontalLayout_main = QHBoxLayout(llmsplit)
         self.horizontalLayout_main.setObjectName(u"horizontalLayout_main")
@@ -33,26 +97,24 @@ class Ui_llmsplit(object):
         self.info_label = QLabel(llmsplit)
         self.info_label.setObjectName(u"info_label")
         self.info_label.setWordWrap(True)
-        self.info_label.setStyleSheet("QLabel { background-color: #e3f2fd; padding: 12px; border-radius: 5px; border: 2px solid #2196f3; }")
+        self.info_label.setStyleSheet("QLabel { background-color: #e3f2fd; color: #1a237e; padding: 12px; border-radius: 5px; border: 2px solid #2196f3; }")
         self.verticalLayout.addWidget(self.info_label)
         
-        # 文件选择区域
-        self.horizontalLayout_file = QHBoxLayout()
-        self.horizontalLayout_file.setObjectName(u"horizontalLayout_file")
-
-        self.videoinput = QLineEdit(llmsplit)
-        self.videoinput.setObjectName(u"videoinput")
-        self.videoinput.setMinimumSize(QSize(0, 35))
-        self.videoinput.setReadOnly(True)
-        self.horizontalLayout_file.addWidget(self.videoinput)
-
-        self.videobtn = QPushButton(llmsplit)
+        # 文件选择区域 - 只保留按钮，支持拖放和点击
+        video_filters = ['.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.mp3', '.wav', '.flac', '.m4a']
+        self.videobtn = DragDropButton("", llmsplit, file_filter=video_filters)
         self.videobtn.setObjectName(u"videobtn")
-        self.videobtn.setMinimumSize(QSize(180, 35))
+        self.videobtn.setMinimumSize(QSize(0, 60))
         self.videobtn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.horizontalLayout_file.addWidget(self.videobtn)
-
-        self.verticalLayout.addLayout(self.horizontalLayout_file)
+        self.videobtn.setStyleSheet("QPushButton { font-size: 14px; font-weight: bold; }")
+        self.verticalLayout.addWidget(self.videobtn)
+        
+        # 显示已选择的文件路径
+        self.videoinput = QLabel(llmsplit)
+        self.videoinput.setObjectName(u"videoinput")
+        self.videoinput.setWordWrap(True)
+        self.videoinput.setStyleSheet("QLabel { color: #2196f3; padding: 5px; }")
+        self.verticalLayout.addWidget(self.videoinput)
         
         # 使用现有字幕选项
         self.use_existing_srt_checkbox = QCheckBox(llmsplit)
@@ -60,25 +122,23 @@ class Ui_llmsplit(object):
         self.use_existing_srt_checkbox.setStyleSheet("QCheckBox { font-weight: bold; color: #ff6f00; }")
         self.verticalLayout.addWidget(self.use_existing_srt_checkbox)
         
-        # 字幕文件选择区域（默认隐藏）
-        self.horizontalLayout_srt = QHBoxLayout()
-        self.horizontalLayout_srt.setObjectName(u"horizontalLayout_srt")
-        
-        self.srtinput = QLineEdit(llmsplit)
-        self.srtinput.setObjectName(u"srtinput")
-        self.srtinput.setMinimumSize(QSize(0, 35))
-        self.srtinput.setReadOnly(True)
-        self.srtinput.setVisible(False)
-        self.horizontalLayout_srt.addWidget(self.srtinput)
-        
-        self.srtbtn = QPushButton(llmsplit)
+        # 字幕文件选择区域（默认隐藏）- 只保留按钮，支持拖放和点击
+        srt_filters = ['.srt']
+        self.srtbtn = DragDropButton("", llmsplit, file_filter=srt_filters)
         self.srtbtn.setObjectName(u"srtbtn")
-        self.srtbtn.setMinimumSize(QSize(180, 35))
+        self.srtbtn.setMinimumSize(QSize(0, 60))
         self.srtbtn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.srtbtn.setStyleSheet("QPushButton { font-size: 14px; font-weight: bold; }")
         self.srtbtn.setVisible(False)
-        self.horizontalLayout_srt.addWidget(self.srtbtn)
+        self.verticalLayout.addWidget(self.srtbtn)
         
-        self.verticalLayout.addLayout(self.horizontalLayout_srt)
+        # 显示已选择的字幕文件路径
+        self.srtinput = QLabel(llmsplit)
+        self.srtinput.setObjectName(u"srtinput")
+        self.srtinput.setWordWrap(True)
+        self.srtinput.setStyleSheet("QLabel { color: #2196f3; padding: 5px; }")
+        self.srtinput.setVisible(False)
+        self.verticalLayout.addWidget(self.srtinput)
         
         # 使用 LLM 优化选项
         self.use_llm_checkbox = QCheckBox(llmsplit)
@@ -87,7 +147,11 @@ class Ui_llmsplit(object):
         self.use_llm_checkbox.setChecked(True)  # 默认启用
         self.verticalLayout.addWidget(self.use_llm_checkbox)
         
-        # LLM 配置区域
+        # 创建水平布局，左侧是LLM配置，右侧是测试按钮
+        self.horizontalLayout_llm = QHBoxLayout()
+        self.horizontalLayout_llm.setObjectName(u"horizontalLayout_llm")
+        
+        # LLM 配置区域（左侧）
         self.gridLayout_llm = QGridLayout()
         self.gridLayout_llm.setObjectName(u"gridLayout_llm")
         self.gridLayout_llm.setVerticalSpacing(10)
@@ -102,6 +166,7 @@ class Ui_llmsplit(object):
         self.llm_provider_combo.setObjectName(u"llm_provider_combo")
         self.llm_provider_combo.setMinimumHeight(35)
         self.llm_provider_combo.addItems(["OpenAI", "Anthropic", "DeepSeek", "SiliconFlow", "Local"])
+        self.llm_provider_combo.setCurrentText("SiliconFlow")  # 默认选择 SiliconFlow
         self.gridLayout_llm.addWidget(self.llm_provider_combo, 0, 1)
         
         # API Key
@@ -137,17 +202,38 @@ class Ui_llmsplit(object):
         self.llm_base_url_input.setMinimumHeight(35)
         self.gridLayout_llm.addWidget(self.llm_base_url_input, 3, 1)
         
-        # 测试连接按钮
+        self.horizontalLayout_llm.addLayout(self.gridLayout_llm)
+        
+        # 测试连接按钮 - 放在右侧，与LLM配置区域等高
         self.llm_test_btn = QPushButton(llmsplit)
         self.llm_test_btn.setObjectName(u"llm_test_btn")
-        self.llm_test_btn.setMinimumSize(QSize(0, 35))
+        # 计算高度：4行 × 35px + 3个间距 × 10px = 140px + 30px = 170px
+        # 使用固定高度确保对齐
+        self.llm_test_btn.setFixedHeight(170)
+        self.llm_test_btn.setMinimumWidth(120)
+        self.llm_test_btn.setMaximumWidth(150)
         self.llm_test_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.llm_test_btn.setStyleSheet("QPushButton { background-color: #2196f3; color: white; } QPushButton:hover { background-color: #1976d2; }")
-        self.gridLayout_llm.addWidget(self.llm_test_btn, 4, 0, 1, 2)
+        self.llm_test_btn.setStyleSheet("""
+            QPushButton { 
+                background-color: #2196f3; 
+                color: white; 
+                font-size: 13px;
+                font-weight: bold;
+                padding: 10px;
+            } 
+            QPushButton:hover { 
+                background-color: #1976d2; 
+            }
+        """)
+        self.horizontalLayout_llm.addWidget(self.llm_test_btn, 0, Qt.AlignTop)
         
-        self.verticalLayout.addLayout(self.gridLayout_llm)
+        self.verticalLayout.addLayout(self.horizontalLayout_llm)
         
-        # 参数设置区域（网格布局）
+        # 创建水平布局，左侧是参数设置，右侧是开始按钮
+        self.horizontalLayout_params = QHBoxLayout()
+        self.horizontalLayout_params.setObjectName(u"horizontalLayout_params")
+        
+        # 参数设置区域（网格布局，2列：标签、输入框）
         self.gridLayout_params = QGridLayout()
         self.gridLayout_params.setObjectName(u"gridLayout_params")
         self.gridLayout_params.setVerticalSpacing(10)
@@ -214,15 +300,34 @@ class Ui_llmsplit(object):
         self._setup_device_options(llmsplit)
         self.gridLayout_params.addWidget(self.device_combo, 4, 1)
         
-        self.verticalLayout.addLayout(self.gridLayout_params)
-
-        # 开始按钮
+        self.horizontalLayout_params.addLayout(self.gridLayout_params)
+        
+        # 开始按钮 - 放在右侧，与参数设置区域等高
         self.startbtn = QPushButton(llmsplit)
         self.startbtn.setObjectName(u"startbtn")
-        self.startbtn.setMinimumSize(QSize(0, 45))
+        self.startbtn.setMinimumWidth(120)
+        self.startbtn.setMaximumWidth(150)
+        # 计算高度：5行 × 35px + 4个间距 × 10px = 175px + 40px = 215px
+        # 使用固定高度确保对齐
+        self.startbtn.setFixedHeight(215)
         self.startbtn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.startbtn.setStyleSheet("QPushButton { font-size: 15px; font-weight: bold; background-color: #4caf50; color: white; } QPushButton:hover { background-color: #45a049; }")
-        self.verticalLayout.addWidget(self.startbtn)
+        # 支持文字换行显示
+        self.startbtn.setStyleSheet("""
+            QPushButton { 
+                font-size: 14px; 
+                font-weight: bold; 
+                background-color: #4caf50; 
+                color: white; 
+                padding: 10px;
+                text-align: center;
+            } 
+            QPushButton:hover { 
+                background-color: #45a049; 
+            }
+        """)
+        self.horizontalLayout_params.addWidget(self.startbtn, 0, Qt.AlignTop)
+        
+        self.verticalLayout.addLayout(self.horizontalLayout_params)
         
         # 日志区域标签
         self.log_title = QLabel(llmsplit)
@@ -235,6 +340,7 @@ class Ui_llmsplit(object):
         self.loglabel.setObjectName(u"loglabel")
         self.loglabel.setReadOnly(True)
         self.loglabel.setMaximumHeight(150)
+        self.loglabel.setFocusPolicy(Qt.NoFocus)  # 禁用焦点，避免光标错误
         self.loglabel.setStyleSheet("QPlainTextEdit { background-color: #263238; color: #aed581; font-family: 'Consolas', 'Monaco', monospace; }")
         self.verticalLayout.addWidget(self.loglabel)
         
@@ -248,6 +354,7 @@ class Ui_llmsplit(object):
         self.resultinput = QPlainTextEdit(llmsplit)
         self.resultinput.setObjectName(u"resultinput")
         self.resultinput.setReadOnly(True)
+        self.resultinput.setFocusPolicy(Qt.NoFocus)  # 禁用焦点，避免光标错误
         self.verticalLayout.addWidget(self.resultinput)
 
         # 结果文件路径
@@ -377,18 +484,20 @@ class Ui_llmsplit(object):
         
         self.info_label.setText(info_text)
         
-        self.videoinput.setPlaceholderText(
-            "请选择视频或音频文件" if config.defaulelang == 'zh' else 'Select video or audio file')
+        self.videobtn.setText(
+            "📁 点击选择视频/音频文件，或直接拖放文件到此处" if config.defaulelang == 'zh' else '📁 Click to Select Video/Audio or Drag & Drop Here')
         
-        self.videobtn.setText("选择视频/音频" if config.defaulelang == 'zh' else 'Select Video/Audio')
+        self.videoinput.setText(
+            "未选择文件" if config.defaulelang == 'zh' else 'No file selected')
         
         self.use_existing_srt_checkbox.setText(
             "🔄 使用现有字幕文件（重新智能分割长句）" if config.defaulelang == 'zh' else '🔄 Use Existing Subtitle File (Re-split Long Sentences)')
         
-        self.srtinput.setPlaceholderText(
-            "请选择字幕文件" if config.defaulelang == 'zh' else 'Select subtitle file')
+        self.srtbtn.setText(
+            "📄 点击选择字幕文件(.srt)，或直接拖放文件到此处" if config.defaulelang == 'zh' else '📄 Click to Select Subtitle (.srt) or Drag & Drop Here')
         
-        self.srtbtn.setText("选择字幕文件(.srt)" if config.defaulelang == 'zh' else 'Select Subtitle (.srt)')
+        self.srtinput.setText(
+            "未选择字幕文件" if config.defaulelang == 'zh' else 'No subtitle file selected')
         
         self.use_llm_checkbox.setText(
             "🤖 启用 LLM 智能断句优化（推荐）" if config.defaulelang == 'zh' else '🤖 Enable LLM Smart Split (Recommended)')
@@ -405,7 +514,7 @@ class Ui_llmsplit(object):
             "可选，用于自定义 API 端点" if config.defaulelang == 'zh' else 'Optional, for custom API endpoint')
         
         self.llm_test_btn.setText(
-            "🔍 测试 LLM 连接" if config.defaulelang == 'zh' else '🔍 Test LLM Connection')
+            "🔍\n测试连接" if config.defaulelang == 'zh' else '🔍\nTest\nConnection')
         
         self.language_label.setText("语言:" if config.defaulelang == 'zh' else 'Language:')
         self.model_label.setText("Whisper模型:" if config.defaulelang == 'zh' else 'Whisper Model:')
@@ -413,15 +522,15 @@ class Ui_llmsplit(object):
         self.words_label.setText("最大词数:" if config.defaulelang == 'zh' else 'Max Words:')
         self.device_label.setText("🚀 加速设备:" if config.defaulelang == 'zh' else '🚀 Device:')
         
-        self.startbtn.setText("🎬 开始生成智能字幕" if config.defaulelang == 'zh' else '🎬 Generate Smart Subtitles')
+        self.startbtn.setText("🎬\n开始生成\n智能字幕" if config.defaulelang == 'zh' else '🎬\nGenerate\nSubtitles')
         
         self.log_title.setText("📋 处理日志:" if config.defaulelang == 'zh' else '📋 Processing Log:')
         self.result_title.setText("📄 生成的字幕:" if config.defaulelang == 'zh' else '📄 Generated Subtitles:')
         
         self.resultlabel.setText("")
-        self.resultinput.setPlaceholderText(
+        self.resultinput.setPlainText(
             "生成的字幕将显示在这里..." if config.defaulelang == 'zh' else "Generated subtitles will be displayed here...")
-        self.loglabel.setPlaceholderText(
+        self.loglabel.setPlainText(
             "处理日志将显示在这里..." if config.defaulelang == 'zh' else "Processing log will be displayed here...")
         self.resultbtn.setText("📁 打开保存目录" if config.defaulelang == 'zh' else '📁 Open Save Directory')
     # retranslateUi

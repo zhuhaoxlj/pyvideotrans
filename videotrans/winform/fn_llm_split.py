@@ -12,6 +12,10 @@ def openwin():
     
     RESULT_DIR = config.HOME_DIR + "/SmartSplit"
     Path(RESULT_DIR).mkdir(exist_ok=True)
+    
+    # 缓存目录
+    CACHE_DIR = Path(config.HOME_DIR) / "whisper_cache"
+    CACHE_DIR.mkdir(exist_ok=True)
 
     class LLMSplitThread(QThread):
         uito = Signal(str)
@@ -39,6 +43,74 @@ def openwin():
 
         def post(self, type='logs', text=""):
             self.uito.emit(json.dumps({"type": type, "text": text}))
+        
+        def get_file_hash(self, filepath):
+            """计算文件的哈希值"""
+            import hashlib
+            
+            hash_obj = hashlib.sha256()
+            try:
+                with open(filepath, 'rb') as f:
+                    # 分块读取，避免大文件占用过多内存
+                    for chunk in iter(lambda: f.read(8192), b''):
+                        hash_obj.update(chunk)
+                return hash_obj.hexdigest()
+            except Exception as e:
+                self.post(type='logs', text=f'⚠️ 计算哈希值失败: {str(e)}')
+                return None
+        
+        def get_cache_key(self, video_file, srt_file=None):
+            """生成缓存键"""
+            video_hash = self.get_file_hash(video_file)
+            if not video_hash:
+                return None
+            
+            if srt_file:
+                srt_hash = self.get_file_hash(srt_file)
+                if not srt_hash:
+                    return None
+                return f"{video_hash}_{srt_hash}"
+            
+            return video_hash
+        
+        def save_cache(self, cache_key, all_words, language):
+            """保存缓存"""
+            import pickle
+            
+            if not cache_key:
+                return
+            
+            cache_file = CACHE_DIR / f"{cache_key}.pkl"
+            try:
+                cache_data = {
+                    'all_words': all_words,
+                    'language': language,
+                    'timestamp': __import__('time').time()
+                }
+                with open(cache_file, 'wb') as f:
+                    pickle.dump(cache_data, f)
+                self.post(type='logs', text=f'💾 缓存已保存: {cache_file.name}')
+            except Exception as e:
+                self.post(type='logs', text=f'⚠️ 保存缓存失败: {str(e)}')
+        
+        def load_cache(self, cache_key):
+            """加载缓存"""
+            import pickle
+            
+            if not cache_key:
+                return None
+            
+            cache_file = CACHE_DIR / f"{cache_key}.pkl"
+            if not cache_file.exists():
+                return None
+            
+            try:
+                with open(cache_file, 'rb') as f:
+                    cache_data = pickle.load(f)
+                return cache_data
+            except Exception as e:
+                self.post(type='logs', text=f'⚠️ 读取缓存失败: {str(e)}')
+                return None
 
         def run(self):
             try:
@@ -55,105 +127,122 @@ def openwin():
         
         def process_new_transcription(self):
             """从视频生成新字幕 + LLM优化"""
-            self.post(type='logs', text='🔧 加载 Faster-Whisper 模型...')
+            # 检查缓存
+            self.post(type='logs', text='🔍 检查缓存...')
+            cache_key = self.get_cache_key(self.video_file)
+            cached_data = self.load_cache(cache_key)
             
-            try:
-                from faster_whisper import WhisperModel
-            except ImportError:
-                self.post(type='error', text='未安装 faster-whisper\n请运行: pip install faster-whisper')
-                return
-            
-            self.post(type='logs', text=f'📥 模型: {self.model_size}')
-            
-            # 设备信息
-            device_name = {
-                'cpu': 'CPU',
-                'cuda': 'CUDA (NVIDIA GPU)',
-                'mps': 'MPS (Apple Silicon GPU)'
-            }.get(self.device, self.device.upper())
-            self.post(type='logs', text=f'⚙️  设备: {device_name}')
-            
-            # 根据设备选择计算类型
-            if self.device == 'cuda':
-                compute_type = "float16"
-            elif self.device == 'mps':
-                compute_type = "float16"
+            if cached_data:
+                self.post(type='logs', text='✅ 找到缓存！直接使用缓存数据')
+                all_words = cached_data['all_words']
+                detected_language = cached_data['language']
+                self.post(type='logs', text=f'📊 从缓存加载: {len(all_words)} 个词')
+                self.post(type='logs', text=f'🌐 检测语言: {detected_language}')
             else:
-                compute_type = "int8"
-            
-            # 加载模型
-            try:
-                model = WhisperModel(
-                    self.model_size,
-                    device=self.device,
-                    compute_type=compute_type,
-                    download_root=config.ROOT_DIR + "/models"
-                )
-            except ValueError as e:
-                if 'unsupported device' in str(e).lower() and self.device == 'mps':
-                    self.post(type='logs', text='⚠️  faster-whisper 暂不支持 MPS')
-                    self.post(type='logs', text='📥 回退到 CPU 模式...')
-                    self.device = 'cpu'
-                    compute_type = 'int8'
+                self.post(type='logs', text='❌ 未找到缓存，开始 Whisper 处理...')
+                self.post(type='logs', text='🔧 加载 Faster-Whisper 模型...')
+                
+                try:
+                    from faster_whisper import WhisperModel
+                except ImportError:
+                    self.post(type='error', text='未安装 faster-whisper\n请运行: pip install faster-whisper')
+                    return
+                
+                self.post(type='logs', text=f'📥 模型: {self.model_size}')
+                
+                # 设备信息
+                device_name = {
+                    'cpu': 'CPU',
+                    'cuda': 'CUDA (NVIDIA GPU)',
+                    'mps': 'MPS (Apple Silicon GPU)'
+                }.get(self.device, self.device.upper())
+                self.post(type='logs', text=f'⚙️  设备: {device_name}')
+                
+                # 根据设备选择计算类型
+                if self.device == 'cuda':
+                    compute_type = "float16"
+                elif self.device == 'mps':
+                    compute_type = "float16"
+                else:
+                    compute_type = "int8"
+                
+                # 加载模型
+                try:
                     model = WhisperModel(
                         self.model_size,
-                        device='cpu',
-                        compute_type='int8',
+                        device=self.device,
+                        compute_type=compute_type,
                         download_root=config.ROOT_DIR + "/models"
                     )
-                else:
-                    raise
-            
-            self.post(type='logs', text=f'🎤 开始识别语音...')
-            self.post(type='logs', text='⏳ 此过程可能需要几分钟，请耐心等待...')
-            
-            # 转录音频
-            import time
-            start_time = time.time()
-            segments, info = model.transcribe(
-                self.video_file,
-                language=self.language if self.language != 'auto' else None,
-                word_timestamps=True,
-                beam_size=5,
-                vad_filter=True,
-                vad_parameters=dict(
-                    threshold=0.5,
-                    min_speech_duration_ms=250,
-                    max_speech_duration_s=float('inf'),
-                    min_silence_duration_ms=2000,
-                    speech_pad_ms=400
-                )
-            )
-            transcribe_time = time.time() - start_time
-            
-            self.post(type='logs', text=f'✅ 识别完成！检测语言: {info.language} (耗时: {transcribe_time:.1f}秒)')
-            self.post(type='logs', text='📊 收集词级时间戳...')
-            
-            # 收集所有词
-            all_words = []
-            segment_count = 0
-            for segment in segments:
-                segment_count += 1
-                if segment_count % 10 == 0:
-                    self.post(type='logs', text=f'   处理片段: {segment_count}...')
+                except ValueError as e:
+                    if 'unsupported device' in str(e).lower() and self.device == 'mps':
+                        self.post(type='logs', text='⚠️  faster-whisper 暂不支持 MPS')
+                        self.post(type='logs', text='📥 回退到 CPU 模式...')
+                        self.device = 'cpu'
+                        compute_type = 'int8'
+                        model = WhisperModel(
+                            self.model_size,
+                            device='cpu',
+                            compute_type='int8',
+                            download_root=config.ROOT_DIR + "/models"
+                        )
+                    else:
+                        raise
                 
-                if hasattr(segment, 'words') and segment.words:
-                    for word in segment.words:
-                        all_words.append({
-                            'word': word.word,
-                            'start': word.start,
-                            'end': word.end
-                        })
-            
-            if not all_words:
-                self.post(type='error', text='未检测到任何语音内容')
-                return
-            
-            self.post(type='logs', text=f'✅ 收集完成！共 {len(all_words)} 个词')
+                self.post(type='logs', text=f'🎤 开始识别语音...')
+                self.post(type='logs', text='⏳ 此过程可能需要几分钟，请耐心等待...')
+                
+                # 转录音频
+                import time
+                start_time = time.time()
+                segments, info = model.transcribe(
+                    self.video_file,
+                    language=self.language if self.language != 'auto' else None,
+                    word_timestamps=True,
+                    beam_size=5,
+                    vad_filter=True,
+                    vad_parameters=dict(
+                        threshold=0.5,
+                        min_speech_duration_ms=250,
+                        max_speech_duration_s=float('inf'),
+                        min_silence_duration_ms=2000,
+                        speech_pad_ms=400
+                    )
+                )
+                transcribe_time = time.time() - start_time
+                
+                self.post(type='logs', text=f'✅ 识别完成！检测语言: {info.language} (耗时: {transcribe_time:.1f}秒)')
+                self.post(type='logs', text='📊 收集词级时间戳...')
+                
+                # 收集所有词
+                all_words = []
+                segment_count = 0
+                for segment in segments:
+                    segment_count += 1
+                    if segment_count % 10 == 0:
+                        self.post(type='logs', text=f'   处理片段: {segment_count}...')
+                    
+                    if hasattr(segment, 'words') and segment.words:
+                        for word in segment.words:
+                            all_words.append({
+                                'word': word.word,
+                                'start': word.start,
+                                'end': word.end
+                            })
+                
+                if not all_words:
+                    self.post(type='error', text='未检测到任何语音内容')
+                    return
+                
+                self.post(type='logs', text=f'✅ 收集完成！共 {len(all_words)} 个词')
+                
+                # 保存缓存
+                detected_language = info.language
+                self.save_cache(cache_key, all_words, detected_language)
             
             # 使用 LLM 进行智能断句
             self.post(type='logs', text='🤖 使用 LLM 进行智能断句优化...')
-            subtitles = self.llm_smart_split(all_words, info.language)
+            subtitles = self.llm_smart_split(all_words, detected_language)
             
             if not subtitles:
                 self.post(type='error', text='LLM 断句失败')
@@ -186,106 +275,124 @@ def openwin():
             original_text = ' '.join([sub['text'] for sub in original_subtitles])
             self.post(type='logs', text=f'📝 原始文本长度: {len(original_text)} 字符')
             
-            # 使用 Whisper 获取词级时间戳
-            self.post(type='logs', text='🔧 加载 Faster-Whisper 模型...')
+            # 检查缓存（包括视频和字幕文件）
+            self.post(type='logs', text='🔍 检查缓存...')
+            cache_key = self.get_cache_key(self.video_file, self.existing_srt)
+            cached_data = self.load_cache(cache_key)
             
-            try:
-                from faster_whisper import WhisperModel
-            except ImportError:
-                self.post(type='error', text='未安装 faster-whisper\n请运行: pip install faster-whisper')
-                return
-            
-            self.post(type='logs', text=f'📥 模型: {self.model_size}')
-            
-            # 设备信息
-            device_name = {
-                'cpu': 'CPU',
-                'cuda': 'CUDA (NVIDIA GPU)',
-                'mps': 'MPS (Apple Silicon GPU)'
-            }.get(self.device, self.device.upper())
-            self.post(type='logs', text=f'⚙️  设备: {device_name}')
-            
-            # 根据设备选择计算类型
-            if self.device == 'cuda':
-                compute_type = "float16"
-            elif self.device == 'mps':
-                compute_type = "float16"
+            if cached_data:
+                self.post(type='logs', text='✅ 找到缓存！直接使用缓存数据')
+                all_words = cached_data['all_words']
+                detected_language = cached_data['language']
+                self.post(type='logs', text=f'📊 从缓存加载: {len(all_words)} 个词')
+                self.post(type='logs', text=f'🌐 检测语言: {detected_language}')
             else:
-                compute_type = "int8"
-            
-            # 加载模型
-            try:
-                model = WhisperModel(
-                    self.model_size,
-                    device=self.device,
-                    compute_type=compute_type,
-                    download_root=config.ROOT_DIR + "/models"
-                )
-            except ValueError as e:
-                if 'unsupported device' in str(e).lower() and self.device == 'mps':
-                    self.post(type='logs', text='⚠️  faster-whisper 暂不支持 MPS')
-                    self.post(type='logs', text='📥 回退到 CPU 模式...')
-                    self.device = 'cpu'
-                    compute_type = 'int8'
+                self.post(type='logs', text='❌ 未找到缓存，开始 Whisper 处理...')
+                
+                # 使用 Whisper 获取词级时间戳
+                self.post(type='logs', text='🔧 加载 Faster-Whisper 模型...')
+                
+                try:
+                    from faster_whisper import WhisperModel
+                except ImportError:
+                    self.post(type='error', text='未安装 faster-whisper\n请运行: pip install faster-whisper')
+                    return
+                
+                self.post(type='logs', text=f'📥 模型: {self.model_size}')
+                
+                # 设备信息
+                device_name = {
+                    'cpu': 'CPU',
+                    'cuda': 'CUDA (NVIDIA GPU)',
+                    'mps': 'MPS (Apple Silicon GPU)'
+                }.get(self.device, self.device.upper())
+                self.post(type='logs', text=f'⚙️  设备: {device_name}')
+                
+                # 根据设备选择计算类型
+                if self.device == 'cuda':
+                    compute_type = "float16"
+                elif self.device == 'mps':
+                    compute_type = "float16"
+                else:
+                    compute_type = "int8"
+                
+                # 加载模型
+                try:
                     model = WhisperModel(
                         self.model_size,
-                        device='cpu',
-                        compute_type='int8',
+                        device=self.device,
+                        compute_type=compute_type,
                         download_root=config.ROOT_DIR + "/models"
                     )
-                else:
-                    raise
-            
-            self.post(type='logs', text=f'🎤 开始识别语音（获取词级时间戳）...')
-            
-            # 转录音频
-            start_time = time.time()
-            segments, info = model.transcribe(
-                self.video_file,
-                language=self.language if self.language != 'auto' else None,
-                word_timestamps=True,
-                beam_size=5,
-                vad_filter=True,
-                vad_parameters=dict(
-                    threshold=0.5,
-                    min_speech_duration_ms=250,
-                    max_speech_duration_s=float('inf'),
-                    min_silence_duration_ms=2000,
-                    speech_pad_ms=400
-                )
-            )
-            transcribe_time = time.time() - start_time
-            
-            self.post(type='logs', text=f'✅ 识别完成！检测语言: {info.language} (耗时: {transcribe_time:.1f}秒)')
-            self.post(type='logs', text='📊 收集词级时间戳...')
-            
-            # 收集所有词
-            all_words = []
-            segment_count = 0
-            word_count = 0
-            for segment in segments:
-                segment_count += 1
-                if segment_count % 10 == 0:
-                    self.post(type='logs', text=f'   处理片段: {segment_count}... (已收集 {word_count} 个词)')
+                except ValueError as e:
+                    if 'unsupported device' in str(e).lower() and self.device == 'mps':
+                        self.post(type='logs', text='⚠️  faster-whisper 暂不支持 MPS')
+                        self.post(type='logs', text='📥 回退到 CPU 模式...')
+                        self.device = 'cpu'
+                        compute_type = 'int8'
+                        model = WhisperModel(
+                            self.model_size,
+                            device='cpu',
+                            compute_type='int8',
+                            download_root=config.ROOT_DIR + "/models"
+                        )
+                    else:
+                        raise
                 
-                if hasattr(segment, 'words') and segment.words:
-                    for word in segment.words:
-                        all_words.append({
-                            'word': word.word,
-                            'start': word.start,
-                            'end': word.end
-                        })
-                        word_count += 1
-            
-            if not all_words:
-                self.post(type='error', text='未检测到任何语音内容')
-                return
-            
-            self.post(type='logs', text=f'✅ 收集完成！共处理 {segment_count} 个片段，{len(all_words)} 个词')
+                self.post(type='logs', text=f'🎤 开始识别语音（获取词级时间戳）...')
+                
+                # 转录音频
+                start_time = time.time()
+                segments, info = model.transcribe(
+                    self.video_file,
+                    language=self.language if self.language != 'auto' else None,
+                    word_timestamps=True,
+                    beam_size=5,
+                    vad_filter=True,
+                    vad_parameters=dict(
+                        threshold=0.5,
+                        min_speech_duration_ms=250,
+                        max_speech_duration_s=float('inf'),
+                        min_silence_duration_ms=2000,
+                        speech_pad_ms=400
+                    )
+                )
+                transcribe_time = time.time() - start_time
+                
+                self.post(type='logs', text=f'✅ 识别完成！检测语言: {info.language} (耗时: {transcribe_time:.1f}秒)')
+                self.post(type='logs', text='📊 收集词级时间戳...')
+                
+                # 收集所有词
+                all_words = []
+                segment_count = 0
+                word_count = 0
+                for segment in segments:
+                    segment_count += 1
+                    if segment_count % 10 == 0:
+                        self.post(type='logs', text=f'   处理片段: {segment_count}... (已收集 {word_count} 个词)')
+                    
+                    if hasattr(segment, 'words') and segment.words:
+                        for word in segment.words:
+                            all_words.append({
+                                'word': word.word,
+                                'start': word.start,
+                                'end': word.end
+                            })
+                            word_count += 1
+                
+                if not all_words:
+                    self.post(type='error', text='未检测到任何语音内容')
+                    return
+                
+                self.post(type='logs', text=f'✅ 收集完成！共处理 {segment_count} 个片段，{len(all_words)} 个词')
+                
+                # 保存缓存
+                detected_language = info.language
+                self.save_cache(cache_key, all_words, detected_language)
             
             # 使用 LLM 进行智能断句（使用原始文本）
             self.post(type='logs', text='🤖 使用 LLM 进行智能断句优化...')
-            subtitles = self.llm_smart_split(all_words, info.language, original_text=original_text)
+            subtitles = self.llm_smart_split(all_words, detected_language, original_text=original_text)
             
             if not subtitles:
                 self.post(type='error', text='LLM 断句失败')
@@ -1032,12 +1139,20 @@ DO NOT include explanations, only return the JSON array."""
         if d['type'] == "error":
             winobj.has_done = True
             winobj.loglabel.setPlainText(d['text'])
+            # 自动滚动到底部
+            winobj.loglabel.verticalScrollBar().setValue(
+                winobj.loglabel.verticalScrollBar().maximum()
+            )
             tools.show_error(d['text'])
             winobj.startbtn.setText('开始生成' if config.defaulelang == 'zh' else 'Start Generate')
             winobj.startbtn.setDisabled(False)
         elif d['type'] == 'logs':
             current_text = winobj.loglabel.toPlainText()
             winobj.loglabel.setPlainText(current_text + '\n' + d['text'])
+            # 自动滚动到底部
+            winobj.loglabel.verticalScrollBar().setValue(
+                winobj.loglabel.verticalScrollBar().maximum()
+            )
         elif d['type'] == 'stream':
             # 流式内容：追加到当前行末尾，不换行
             current_text = winobj.loglabel.toPlainText()
@@ -1054,14 +1169,18 @@ DO NOT include explanations, only return the JSON array."""
             winobj.resultbtn.setDisabled(False)
             winobj.resultinput.setPlainText(Path(winobj.resultlabel.text()).read_text(encoding='utf-8'))
             winobj.loglabel.setPlainText(winobj.loglabel.toPlainText() + '\n\n✅ 生成完成！')
+            # 自动滚动到底部
+            winobj.loglabel.verticalScrollBar().setValue(
+                winobj.loglabel.verticalScrollBar().maximum()
+            )
 
     def toggle_srt_input():
         """切换字幕文件输入框的显示"""
         is_checked = winobj.use_existing_srt_checkbox.isChecked()
-        winobj.srtinput.setVisible(is_checked)
         winobj.srtbtn.setVisible(is_checked)
+        winobj.srtinput.setVisible(is_checked)
         if not is_checked:
-            winobj.srtinput.setText("")
+            winobj.srtinput.setText("未选择字幕文件" if config.defaulelang == 'zh' else 'No subtitle file selected')
     
     def toggle_llm_settings():
         """切换 LLM 设置的显示"""
@@ -1079,202 +1198,333 @@ DO NOT include explanations, only return the JSON array."""
         
         # 勾选 LLM 时，隐藏最大持续时间和最大词数（LLM 会自动优化）
         # 不勾选时显示这些参数（规则引擎需要）
-        winobj.duration_spinbox.setVisible(not is_checked)
+        winobj.duration_input.setVisible(not is_checked)
         winobj.duration_label.setVisible(not is_checked)
-        winobj.words_spinbox.setVisible(not is_checked)
+        winobj.words_input.setVisible(not is_checked)
         winobj.words_label.setVisible(not is_checked)
     
-    def test_llm_connection():
-        """测试 LLM 连接是否正常"""
-        from PySide6.QtWidgets import QMessageBox
-        from PySide6.QtCore import Qt
-        from PySide6.QtGui import QIcon
+    def save_api_key_to_env():
+        """保存 API Key 到 .env 文件"""
+        import os
+        api_key = winobj.llm_api_key_input.text().strip()
+        if not api_key:
+            return
         
+        env_file = os.path.join(config.ROOT_DIR, '.env')
+        
+        # 读取现有的 .env 文件内容
+        lines = []
+        key_exists = False
+        
+        if os.path.exists(env_file):
+            try:
+                with open(env_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                # 查找并更新 SILICONFLOW_API_KEY
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('SILICONFLOW_API_KEY='):
+                        lines[i] = f'SILICONFLOW_API_KEY={api_key}\n'
+                        key_exists = True
+                        break
+            except Exception as e:
+                print(f"读取 .env 文件失败: {e}")
+        
+        # 如果 key 不存在，添加到文件末尾
+        if not key_exists:
+            if lines and not lines[-1].endswith('\n'):
+                lines.append('\n')
+            lines.append(f'SILICONFLOW_API_KEY={api_key}\n')
+        
+        # 写回文件
+        try:
+            with open(env_file, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+            print(f"API Key 已保存到 {env_file}")
+        except Exception as e:
+            print(f"保存 API Key 失败: {e}")
+    
+    class TestLLMThread(QThread):
+        """异步测试LLM连接的线程"""
+        finished = Signal(str, bool)  # 信号：(消息, 是否成功)
+        progress = Signal(str)  # 进度信号
+        
+        def __init__(self, provider, api_key, model, base_url):
+            super().__init__()
+            self.provider = provider
+            self.api_key = api_key
+            self.model = model
+            self.base_url = base_url
+        
+        def run(self):
+            try:
+                import requests
+                
+                # 发送进度更新
+                self.progress.emit('⏳ 正在构建测试请求...' if config.defaulelang == 'zh' else '⏳ Building test request...')
+                
+                # 构建测试请求
+                test_prompt = "请回复'OK'，这是一个连接测试。" if config.defaulelang == 'zh' else "Reply 'OK', this is a connection test."
+                
+                if self.provider == 'openai':
+                    url = self.base_url if self.base_url else 'https://api.openai.com/v1/chat/completions'
+                    headers = {
+                        'Authorization': f'Bearer {self.api_key}',
+                        'Content-Type': 'application/json'
+                    }
+                    data = {
+                        'model': self.model,
+                        'messages': [{'role': 'user', 'content': test_prompt}],
+                        'max_tokens': 10
+                    }
+                
+                elif self.provider == 'anthropic':
+                    url = 'https://api.anthropic.com/v1/messages'
+                    headers = {
+                        'x-api-key': self.api_key,
+                        'anthropic-version': '2023-06-01',
+                        'Content-Type': 'application/json'
+                    }
+                    data = {
+                        'model': self.model,
+                        'max_tokens': 10,
+                        'messages': [{'role': 'user', 'content': test_prompt}]
+                    }
+                
+                elif self.provider == 'deepseek':
+                    url = 'https://api.deepseek.com/v1/chat/completions'
+                    headers = {
+                        'Authorization': f'Bearer {self.api_key}',
+                        'Content-Type': 'application/json'
+                    }
+                    data = {
+                        'model': self.model,
+                        'messages': [{'role': 'user', 'content': test_prompt}],
+                        'max_tokens': 10
+                    }
+                
+                elif self.provider == 'siliconflow':
+                    url = self.base_url if self.base_url else 'https://api.siliconflow.cn/v1/chat/completions'
+                    headers = {
+                        'Authorization': f'Bearer {self.api_key}',
+                        'Content-Type': 'application/json'
+                    }
+                    data = {
+                        'model': self.model,
+                        'messages': [{'role': 'user', 'content': test_prompt}],
+                        'max_tokens': 10
+                    }
+                
+                elif self.provider == 'local':
+                    url = self.base_url if self.base_url else 'http://localhost:11434/api/generate'
+                    data = {
+                        'model': self.model,
+                        'prompt': test_prompt,
+                        'stream': False
+                    }
+                    headers = {}
+                
+                else:
+                    self.finished.emit(
+                        f'不支持的提供商: {self.provider}' if config.defaulelang == 'zh' else f'Unsupported provider: {self.provider}',
+                        False
+                    )
+                    return
+                
+                # 发送进度更新
+                self.progress.emit('📡 正在连接服务器...' if config.defaulelang == 'zh' else '📡 Connecting to server...')
+                
+                # 发送测试请求
+                response = requests.post(url, headers=headers, json=data, timeout=30)
+                
+                # 发送进度更新
+                self.progress.emit('📥 正在解析响应...' if config.defaulelang == 'zh' else '📥 Parsing response...')
+                
+                # 检查响应
+                if response.status_code == 200:
+                    result = response.json()
+                    # 验证响应格式
+                    if self.provider in ['openai', 'deepseek', 'siliconflow']:
+                        if 'choices' in result and len(result['choices']) > 0:
+                            success_msg = f'✅ 连接成功！提供商: {self.provider} | 模型: {self.model} | 响应正常' if config.defaulelang == 'zh' else f'✅ Connection Successful! Provider: {self.provider} | Model: {self.model} | Response OK'
+                            self.finished.emit(success_msg, True)
+                        else:
+                            self.finished.emit('响应格式不正确' if config.defaulelang == 'zh' else 'Invalid response format', False)
+                    
+                    elif self.provider == 'anthropic':
+                        if 'content' in result:
+                            success_msg = f'✅ 连接成功！提供商: {self.provider} | 模型: {self.model} | 响应正常' if config.defaulelang == 'zh' else f'✅ Connection Successful! Provider: {self.provider} | Model: {self.model} | Response OK'
+                            self.finished.emit(success_msg, True)
+                        else:
+                            self.finished.emit('响应格式不正确' if config.defaulelang == 'zh' else 'Invalid response format', False)
+                    
+                    elif self.provider == 'local':
+                        if 'response' in result:
+                            success_msg = f'✅ 连接成功！提供商: {self.provider} | 模型: {self.model} | 响应正常' if config.defaulelang == 'zh' else f'✅ Connection Successful! Provider: {self.provider} | Model: {self.model} | Response OK'
+                            self.finished.emit(success_msg, True)
+                        else:
+                            self.finished.emit('响应格式不正确' if config.defaulelang == 'zh' else 'Invalid response format', False)
+                else:
+                    error_msg = f'❌ 连接失败！HTTP {response.status_code}: {response.text[:200]}' if config.defaulelang == 'zh' else f'❌ Connection Failed! HTTP {response.status_code}: {response.text[:200]}'
+                    self.finished.emit(error_msg, False)
+            
+            except requests.exceptions.Timeout:
+                self.finished.emit(
+                    '❌ 连接超时！请检查网络连接' if config.defaulelang == 'zh' else '❌ Connection Timeout! Please check network connection',
+                    False
+                )
+            
+            except requests.exceptions.ConnectionError:
+                self.finished.emit(
+                    '❌ 无法连接到服务器！请检查网络或 Base URL' if config.defaulelang == 'zh' else '❌ Cannot connect to server! Please check network or Base URL',
+                    False
+                )
+            
+            except Exception as e:
+                error_msg = f'❌ 测试失败！{str(e)}' if config.defaulelang == 'zh' else f'❌ Test Failed! {str(e)}'
+                self.finished.emit(error_msg, False)
+    
+    def test_llm_connection():
+        """测试 LLM 连接是否正常（异步）"""
         # 获取配置
         provider = winobj.llm_provider_combo.currentText().lower()
         api_key = winobj.llm_api_key_input.text()
         model = winobj.llm_model_combo.currentText()
         base_url = winobj.llm_base_url_input.text()
         
+        # 清空日志或获取当前日志内容
+        current_log = winobj.loglabel.toPlainText()
+        if current_log in ["处理日志将显示在这里...", "Processing log will be displayed here..."]:
+            winobj.loglabel.clear()
+        
         # 验证必填项
         if not api_key and provider != 'local':
-            tools.show_error(
-                '请输入 API Key' if config.defaulelang == 'zh' else 'Please enter API Key',
-                False)
+            msg = '❌ 请输入 API Key' if config.defaulelang == 'zh' else '❌ Please enter API Key'
+            winobj.loglabel.appendPlainText(f'\n{msg}')
+            # 自动滚动
+            winobj.loglabel.verticalScrollBar().setValue(
+                winobj.loglabel.verticalScrollBar().maximum()
+            )
             return
         
         if not model:
-            tools.show_error(
-                '请选择模型' if config.defaulelang == 'zh' else 'Please select model',
-                False)
+            msg = '❌ 请选择模型' if config.defaulelang == 'zh' else '❌ Please select model'
+            winobj.loglabel.appendPlainText(f'\n{msg}')
+            # 自动滚动
+            winobj.loglabel.verticalScrollBar().setValue(
+                winobj.loglabel.verticalScrollBar().maximum()
+            )
             return
         
         # 禁用按钮，显示测试中
         winobj.llm_test_btn.setDisabled(True)
-        winobj.llm_test_btn.setText('⏳ 测试中...' if config.defaulelang == 'zh' else '⏳ Testing...')
+        winobj.llm_test_btn.setText('⏳\n测试中' if config.defaulelang == 'zh' else '⏳\nTesting')
         
-        def show_success(message):
-            """显示成功消息"""
-            msg_box = QMessageBox(winobj)
-            msg_box.setWindowTitle('测试成功' if config.defaulelang == 'zh' else 'Test Successful')
-            msg_box.setIcon(QMessageBox.Information)
-            msg_box.setText(message)
-            msg_box.setStandardButtons(QMessageBox.Ok)
-            msg_box.setWindowFlags(msg_box.windowFlags() | Qt.WindowStaysOnTopHint)
-            try:
-                icon_path = f"{config.ROOT_DIR}/videotrans/styles/icon.ico"
-                msg_box.setWindowIcon(QIcon(icon_path))
-            except:
-                pass
-            msg_box.exec()
+        # 在日志中显示开始测试
+        if config.defaulelang == 'zh':
+            test_start_msg = f'\n{"="*50}\n🔍 开始测试 LLM 连接...\n{"="*50}\n📌 提供商: {provider}\n📌 模型: {model}\n📌 正在发送测试请求...'
+        else:
+            test_start_msg = f'\n{"="*50}\n🔍 Testing LLM connection...\n{"="*50}\n📌 Provider: {provider}\n📌 Model: {model}\n📌 Sending test request...'
         
-        try:
-            import requests
-            
-            # 构建测试请求
-            test_prompt = "请回复'OK'，这是一个连接测试。" if config.defaulelang == 'zh' else "Reply 'OK', this is a connection test."
-            
-            if provider == 'openai':
-                url = base_url if base_url else 'https://api.openai.com/v1/chat/completions'
-                headers = {
-                    'Authorization': f'Bearer {api_key}',
-                    'Content-Type': 'application/json'
-                }
-                data = {
-                    'model': model,
-                    'messages': [{'role': 'user', 'content': test_prompt}],
-                    'max_tokens': 10
-                }
-            
-            elif provider == 'anthropic':
-                url = 'https://api.anthropic.com/v1/messages'
-                headers = {
-                    'x-api-key': api_key,
-                    'anthropic-version': '2023-06-01',
-                    'Content-Type': 'application/json'
-                }
-                data = {
-                    'model': model,
-                    'max_tokens': 10,
-                    'messages': [{'role': 'user', 'content': test_prompt}]
-                }
-            
-            elif provider == 'deepseek':
-                url = 'https://api.deepseek.com/v1/chat/completions'
-                headers = {
-                    'Authorization': f'Bearer {api_key}',
-                    'Content-Type': 'application/json'
-                }
-                data = {
-                    'model': model,
-                    'messages': [{'role': 'user', 'content': test_prompt}],
-                    'max_tokens': 10
-                }
-            
-            elif provider == 'siliconflow':
-                url = base_url if base_url else 'https://api.siliconflow.cn/v1/chat/completions'
-                headers = {
-                    'Authorization': f'Bearer {api_key}',
-                    'Content-Type': 'application/json'
-                }
-                data = {
-                    'model': model,
-                    'messages': [{'role': 'user', 'content': test_prompt}],
-                    'max_tokens': 10
-                }
-            
-            elif provider == 'local':
-                url = base_url if base_url else 'http://localhost:11434/api/generate'
-                data = {
-                    'model': model,
-                    'prompt': test_prompt,
-                    'stream': False
-                }
-                headers = {}
-            
-            else:
-                tools.show_error(
-                    f'不支持的提供商: {provider}' if config.defaulelang == 'zh' else f'Unsupported provider: {provider}',
-                    False)
-                return
-            
-            # 发送测试请求
-            response = requests.post(url, headers=headers, json=data, timeout=30)
-            
-            # 检查响应
-            if response.status_code == 200:
-                result = response.json()
-                # 验证响应格式
-                if provider in ['openai', 'deepseek', 'siliconflow']:
-                    if 'choices' in result and len(result['choices']) > 0:
-                        success_msg = f'✅ 连接成功！\n\n提供商: {provider}\n模型: {model}\n响应正常' if config.defaulelang == 'zh' else f'✅ Connection Successful!\n\nProvider: {provider}\nModel: {model}\nResponse OK'
-                        show_success(success_msg)
-                    else:
-                        raise ValueError('响应格式不正确' if config.defaulelang == 'zh' else 'Invalid response format')
-                
-                elif provider == 'anthropic':
-                    if 'content' in result:
-                        success_msg = f'✅ 连接成功！\n\n提供商: {provider}\n模型: {model}\n响应正常' if config.defaulelang == 'zh' else f'✅ Connection Successful!\n\nProvider: {provider}\nModel: {model}\nResponse OK'
-                        show_success(success_msg)
-                    else:
-                        raise ValueError('响应格式不正确' if config.defaulelang == 'zh' else 'Invalid response format')
-                
-                elif provider == 'local':
-                    if 'response' in result:
-                        success_msg = f'✅ 连接成功！\n\n提供商: {provider}\n模型: {model}\n响应正常' if config.defaulelang == 'zh' else f'✅ Connection Successful!\n\nProvider: {provider}\nModel: {model}\nResponse OK'
-                        show_success(success_msg)
-                    else:
-                        raise ValueError('响应格式不正确' if config.defaulelang == 'zh' else 'Invalid response format')
-            else:
-                error_msg = f'❌ 连接失败！\n\nHTTP {response.status_code}\n{response.text[:200]}' if config.defaulelang == 'zh' else f'❌ Connection Failed!\n\nHTTP {response.status_code}\n{response.text[:200]}'
-                tools.show_error(error_msg, False)
+        winobj.loglabel.appendPlainText(test_start_msg)
+        # 自动滚动到底部
+        winobj.loglabel.verticalScrollBar().setValue(
+            winobj.loglabel.verticalScrollBar().maximum()
+        )
         
-        except requests.exceptions.Timeout:
-            tools.show_error(
-                '❌ 连接超时！\n\n请检查网络连接' if config.defaulelang == 'zh' else '❌ Connection Timeout!\n\nPlease check network connection',
-                False)
+        # 强制刷新UI
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
         
-        except requests.exceptions.ConnectionError:
-            tools.show_error(
-                '❌ 无法连接到服务器！\n\n请检查网络或 Base URL' if config.defaulelang == 'zh' else '❌ Cannot connect to server!\n\nPlease check network or Base URL',
-                False)
+        # 创建并启动测试线程
+        test_thread = TestLLMThread(provider, api_key, model, base_url)
         
-        except Exception as e:
-            error_msg = f'❌ 测试失败！\n\n{str(e)}' if config.defaulelang == 'zh' else f'❌ Test Failed!\n\n{str(e)}'
-            tools.show_error(error_msg, False)
+        def on_test_progress(message):
+            """进度更新的回调"""
+            # 在日志中显示进度
+            winobj.loglabel.appendPlainText(f'{message}')
+            # 自动滚动到底部
+            winobj.loglabel.verticalScrollBar().setValue(
+                winobj.loglabel.verticalScrollBar().maximum()
+            )
         
-        finally:
+        def on_test_finished(message, success):
+            """测试完成的回调"""
+            # 在日志中显示结果
+            winobj.loglabel.appendPlainText(f'\n{message}')
+            winobj.loglabel.appendPlainText(f'{"="*50}\n')
+            
+            # 自动滚动到底部
+            winobj.loglabel.verticalScrollBar().setValue(
+                winobj.loglabel.verticalScrollBar().maximum()
+            )
+            
             # 恢复按钮状态
             winobj.llm_test_btn.setDisabled(False)
-            winobj.llm_test_btn.setText('🔍 测试 LLM 连接' if config.defaulelang == 'zh' else '🔍 Test LLM Connection')
+            winobj.llm_test_btn.setText('🔍\n测试连接' if config.defaulelang == 'zh' else '🔍\nTest\nConnection')
+        
+        test_thread.progress.connect(on_test_progress)
+        test_thread.finished.connect(on_test_finished)
+        test_thread.start()
+        
+        # 保存线程引用，避免被垃圾回收
+        winobj._test_thread = test_thread
     
     def get_file():
-        formats = ['mp4', 'mkv', 'avi', 'mov', 'flv', 'wmv', 'mp3', 'wav', 'flac', 'm4a']
-        format_str = ' '.join([f'*.{f}' for f in formats])
-        fname, _ = QFileDialog.getOpenFileName(
-            winobj, 
-            "选择视频或音频文件",
-            config.params['last_opendir'],
-            f"Video/Audio files({format_str})"
-        )
+        # 检查是否是拖放文件
+        if hasattr(winobj.videobtn, 'selected_file') and winobj.videobtn.selected_file:
+            fname = winobj.videobtn.selected_file
+            winobj.videobtn.selected_file = ""  # 清空，避免重复使用
+        else:
+            # 点击按钮选择文件
+            formats = ['mp4', 'mkv', 'avi', 'mov', 'flv', 'wmv', 'mp3', 'wav', 'flac', 'm4a']
+            format_str = ' '.join([f'*.{f}' for f in formats])
+            fname, _ = QFileDialog.getOpenFileName(
+                winobj, 
+                "选择视频或音频文件" if config.defaulelang == 'zh' else 'Select Video/Audio File',
+                config.params['last_opendir'],
+                f"Video/Audio files({format_str})"
+            )
+        
         if fname:
-            winobj.videoinput.setText(fname.replace('file:///', '').replace('\\', '/'))
+            from pathlib import Path
+            fname = fname.replace('file:///', '').replace('\\', '/')
+            # 显示文件名
+            file_name = Path(fname).name
+            winobj.videoinput.setText(f"✅ {file_name}\n📂 {fname}")
     
     def get_srt_file():
         """选择字幕文件"""
-        fname, _ = QFileDialog.getOpenFileName(
-            winobj,
-            "选择字幕文件" if config.defaulelang == 'zh' else 'Select Subtitle File',
-            config.params['last_opendir'],
-            "Subtitle files(*.srt)"
-        )
+        # 检查是否是拖放文件
+        if hasattr(winobj.srtbtn, 'selected_file') and winobj.srtbtn.selected_file:
+            fname = winobj.srtbtn.selected_file
+            winobj.srtbtn.selected_file = ""  # 清空，避免重复使用
+        else:
+            # 点击按钮选择文件
+            fname, _ = QFileDialog.getOpenFileName(
+                winobj,
+                "选择字幕文件" if config.defaulelang == 'zh' else 'Select Subtitle File',
+                config.params['last_opendir'],
+                "Subtitle files(*.srt)"
+            )
+        
         if fname:
-            winobj.srtinput.setText(fname.replace('file:///', '').replace('\\', '/'))
+            from pathlib import Path
+            fname = fname.replace('file:///', '').replace('\\', '/')
+            # 显示文件名
+            file_name = Path(fname).name
+            winobj.srtinput.setText(f"✅ {file_name}\n📂 {fname}")
 
     def start():
         winobj.has_done = False
-        video_file = winobj.videoinput.text()
-        if not video_file:
+        # 从显示文本中提取文件路径（格式：✅ 文件名\n📂 路径）
+        video_text = winobj.videoinput.text()
+        if '📂' in video_text:
+            video_file = video_text.split('📂')[-1].strip()
+        else:
+            video_file = video_text
+        
+        if not video_file or video_file == "未选择文件" or video_file == "No file selected":
             tools.show_error(
                 '必须选择视频或音频文件' if config.defaulelang == 'zh' else 'Video/audio file must be selected',
                 False)
@@ -1286,8 +1536,14 @@ DO NOT include explanations, only return the JSON array."""
         # 检查是否使用现有字幕
         existing_srt = None
         if winobj.use_existing_srt_checkbox.isChecked():
-            existing_srt = winobj.srtinput.text()
-            if not existing_srt:
+            # 从显示文本中提取文件路径
+            srt_text = winobj.srtinput.text()
+            if '📂' in srt_text:
+                existing_srt = srt_text.split('📂')[-1].strip()
+            else:
+                existing_srt = srt_text
+            
+            if not existing_srt or existing_srt == "未选择字幕文件" or existing_srt == "No subtitle file selected":
                 tools.show_error(
                     '请选择字幕文件' if config.defaulelang == 'zh' else 'Please select subtitle file',
                     False)
@@ -1374,6 +1630,7 @@ DO NOT include explanations, only return the JSON array."""
             return
         winobj = LLMSplitForm()
         config.child_forms['llmsplitw'] = winobj
+        
         winobj.videobtn.clicked.connect(get_file)
         winobj.srtbtn.clicked.connect(get_srt_file)
         winobj.use_existing_srt_checkbox.stateChanged.connect(toggle_srt_input)
@@ -1381,6 +1638,55 @@ DO NOT include explanations, only return the JSON array."""
         winobj.llm_test_btn.clicked.connect(test_llm_connection)
         winobj.resultbtn.clicked.connect(opendir)
         winobj.startbtn.clicked.connect(start)
+        
+        # 监听 API Key 输入变化，自动保存到 .env 文件
+        winobj.llm_api_key_input.textChanged.connect(save_api_key_to_env)
+        
+        # 初始化时根据默认状态显示/隐藏控件
+        toggle_llm_settings()
+        toggle_srt_input()
+        
+        # 从环境变量或配置文件读取 API Key
+        import os
+        api_key = ""
+        # 首先尝试从环境变量读取
+        api_key = os.environ.get('SILICONFLOW_API_KEY', '')
+        # 如果环境变量没有，尝试从 .env 文件读取
+        if not api_key:
+            env_file = os.path.join(config.ROOT_DIR, '.env')
+            if os.path.exists(env_file):
+                try:
+                    with open(env_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                if '=' in line:
+                                    key, value = line.split('=', 1)
+                                    key = key.strip()
+                                    value = value.strip().strip('"').strip("'")
+                                    if key == 'SILICONFLOW_API_KEY':
+                                        api_key = value
+                                        break
+                except Exception as e:
+                    print(f"读取 .env 文件失败: {e}")
+        
+        # 设置 API Key 到输入框
+        if api_key:
+            winobj.llm_api_key_input.setText(api_key)
+        
+        # 设置默认模型为 DeepSeek-R1（在 UI 初始化后，提供商已经设置为 SiliconFlow）
+        winobj.llm_model_combo.setCurrentText("deepseek-ai/DeepSeek-R1")
+        
+        # 让窗口在屏幕上居中显示
+        from PySide6.QtGui import QGuiApplication
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            screen_geometry = screen.availableGeometry()
+            window_geometry = winobj.frameGeometry()
+            center_point = screen_geometry.center()
+            window_geometry.moveCenter(center_point)
+            winobj.move(window_geometry.topLeft())
+        
         winobj.show()
     except Exception as e:
         import traceback
