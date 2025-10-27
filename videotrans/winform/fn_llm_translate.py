@@ -319,159 +319,298 @@ def openwin():
                 raise ValueError(f'不支持的翻译器类型: {translator["type"]}')
         
         def translate_with_openai(self, translator, texts):
-            """使用 OpenAI API 翻译"""
+            """使用 OpenAI API 翻译（带重试机制）"""
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    result = self._translate_with_openai_once(translator, texts, attempt)
+                    
+                    # 验证结果完整性
+                    if len(result) == len(texts):
+                        missing_count = sum(1 for t in result if not t or not t.strip())
+                        if missing_count == 0:
+                            return result
+                        elif attempt < max_retries - 1:
+                            # 如果有遗漏且还有重试机会，只重新翻译遗漏的部分
+                            config.logger.warning(f'第 {attempt + 1} 次翻译有 {missing_count} 条遗漏，尝试补充翻译')
+                            result = self._fix_missing_translations(translator, texts, result)
+                            if sum(1 for t in result if not t or not t.strip()) == 0:
+                                return result
+                    
+                    if attempt == max_retries - 1:
+                        config.logger.warning(f'翻译结果不完整，有 {missing_count} 条遗漏')
+                        return result
+                        
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    config.logger.warning(f'第 {attempt + 1} 次翻译失败，重试中: {e}')
+            
+            return result
+        
+        def _fix_missing_translations(self, translator, original_texts, translated_texts):
+            """补充翻译遗漏的句子"""
+            missing_indices = [i for i, t in enumerate(translated_texts) if not t or not t.strip()]
+            if not missing_indices:
+                return translated_texts
+            
+            # 收集需要重新翻译的文本
+            texts_to_retry = [original_texts[i] for i in missing_indices]
+            
+            try:
+                # 重新翻译遗漏的部分（使用更严格的 prompt）
+                retried_translations = self._translate_with_openai_once(
+                    translator, texts_to_retry, attempt=99  # 使用特殊标记表示补充翻译
+                )
+                
+                # 填充回结果
+                result = list(translated_texts)
+                for idx, translated in zip(missing_indices, retried_translations):
+                    if translated and translated.strip():
+                        result[idx] = translated
+                
+                return result
+            except Exception as e:
+                config.logger.error(f'补充翻译失败: {e}')
+                return translated_texts
+        
+        def _translate_with_openai_once(self, translator, texts, attempt=0):
+            """使用 OpenAI API 翻译（单次）"""
             # 构建提示词
             source_lang_name = self.get_language_name(self.source_lang)
             target_lang_name = self.get_language_name(self.target_lang)
             
-            prompt = f"""你是一个专业的字幕翻译助手。请将以下字幕从{source_lang_name}翻译成{target_lang_name}。
+            # 使用更严格的 JSON 格式 prompt
+            if attempt == 99:  # 补充翻译模式
+                prompt = f"""你是专业字幕翻译助手。以下是{len(texts)}条未翻译的{source_lang_name}字幕，请翻译成{target_lang_name}。
 
-要求：
-1. 保持原有的行数和格式
-2. 翻译要准确、流畅、自然
-3. 保留专有名词的原文
-4. 每行翻译结果用换行符分隔
-5. 不要添加任何序号、注释或额外的说明
+⚠️ 重要要求：
+1. 必须翻译所有{len(texts)}条字幕，一条都不能遗漏
+2. 按照原文顺序，每行输出一条翻译
+3. 即使某条很短或很简单，也必须翻译
+4. 不要添加序号、注释或任何额外内容
+5. 翻译要准确、流畅、自然
 
-待翻译的字幕（每行一条）：
+原文字幕：
+"""
+            else:
+                prompt = f"""你是专业字幕翻译助手。请将以下{len(texts)}条{source_lang_name}字幕翻译成{target_lang_name}。
+
+⚠️ 关键要求：
+1. 必须翻译全部{len(texts)}条字幕，一条都不能遗漏
+2. 严格按照原文顺序输出，每行一条翻译
+3. 每条字幕都必须有对应的翻译，不能跳过
+4. 不要添加序号（如1. 2.）、注释或任何额外内容
+5. 翻译要准确、流畅、符合{target_lang_name}习惯
+
+原文字幕（共{len(texts)}条）：
 """
             
             for i, text in enumerate(texts, 1):
                 prompt += f"{text}\n"
             
-            prompt += "\n请直接输出翻译结果，每行对应一条翻译，不要包含任何其他内容："
+            prompt += f"\n请直接输出{len(texts)}条翻译结果，每行一条，确保数量完全匹配："
             
             # 调用 API
             client = translator['client']
             model = translator['model']
             
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": "你是一个专业的字幕翻译助手，擅长准确、流畅地翻译字幕。"},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.3,
-                    max_tokens=4096
-                )
-                
-                result = response.choices[0].message.content.strip()
-                
-                # 解析结果
-                translated_lines = result.split('\n')
-                translated_lines = [line.strip() for line in translated_lines if line.strip()]
-                
-                # 确保结果行数匹配
-                if len(translated_lines) < len(texts):
-                    translated_lines += [''] * (len(texts) - len(translated_lines))
-                elif len(translated_lines) > len(texts):
-                    translated_lines = translated_lines[:len(texts)]
-                
-                return translated_lines
-                
-            except Exception as e:
-                config.logger.error(f'OpenAI 翻译失败: {e}', exc_info=True)
-                raise
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": f"你是专业字幕翻译助手。必须严格按照要求翻译所有字幕，不能遗漏任何一条。输出格式：每行一条翻译，共{len(texts)}行。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=4096
+            )
+            
+            result = response.choices[0].message.content.strip()
+            
+            # 改进的解析逻辑：不过滤空行，保持原始行数
+            lines = result.split('\n')
+            
+            # 移除可能的序号前缀（如 "1. ", "1) ", "1、"等）
+            import re
+            translated_lines = []
+            for line in lines:
+                # 去除序号前缀
+                cleaned = re.sub(r'^\d+[\.\)、]\s*', '', line).strip()
+                translated_lines.append(cleaned)
+            
+            # 过滤掉完全空的行，但只在开头和结尾
+            while translated_lines and not translated_lines[0]:
+                translated_lines.pop(0)
+            while translated_lines and not translated_lines[-1]:
+                translated_lines.pop()
+            
+            # 确保结果行数匹配
+            if len(translated_lines) < len(texts):
+                config.logger.warning(f'翻译结果不足：期望 {len(texts)} 条，实际 {len(translated_lines)} 条')
+                translated_lines += [''] * (len(texts) - len(translated_lines))
+            elif len(translated_lines) > len(texts):
+                config.logger.warning(f'翻译结果过多：期望 {len(texts)} 条，实际 {len(translated_lines)} 条，截取前 {len(texts)} 条')
+                translated_lines = translated_lines[:len(texts)]
+            
+            return translated_lines
         
         def translate_with_claude(self, translator, texts):
-            """使用 Claude API 翻译"""
-            source_lang_name = self.get_language_name(self.source_lang)
-            target_lang_name = self.get_language_name(self.target_lang)
+            """使用 Claude API 翻译（带重试机制）"""
+            import re
+            max_retries = 2
             
-            prompt = f"""你是一个专业的字幕翻译助手。请将以下字幕从{source_lang_name}翻译成{target_lang_name}。
+            for attempt in range(max_retries):
+                try:
+                    source_lang_name = self.get_language_name(self.source_lang)
+                    target_lang_name = self.get_language_name(self.target_lang)
+                    
+                    prompt = f"""你是专业字幕翻译助手。请将以下{len(texts)}条{source_lang_name}字幕翻译成{target_lang_name}。
 
-要求：
-1. 保持原有的行数和格式
-2. 翻译要准确、流畅、自然
-3. 保留专有名词的原文
-4. 每行翻译结果用换行符分隔
-5. 不要添加任何序号、注释或额外的说明
+⚠️ 关键要求：
+1. 必须翻译全部{len(texts)}条字幕，一条都不能遗漏
+2. 严格按照原文顺序输出，每行一条翻译
+3. 每条字幕都必须有对应的翻译，不能跳过
+4. 不要添加序号（如1. 2.）、注释或任何额外内容
+5. 翻译要准确、流畅、符合{target_lang_name}习惯
 
-待翻译的字幕（每行一条）：
+原文字幕（共{len(texts)}条）：
 """
+                    
+                    for i, text in enumerate(texts, 1):
+                        prompt += f"{text}\n"
+                    
+                    prompt += f"\n请直接输出{len(texts)}条翻译结果，每行一条，确保数量完全匹配："
+                    
+                    # 调用 API
+                    client = translator['client']
+                    model = translator['model']
+                    
+                    response = client.messages.create(
+                        model=model,
+                        max_tokens=4096,
+                        system=f"你是专业字幕翻译助手。必须严格按照要求翻译所有字幕，不能遗漏任何一条。输出格式：每行一条翻译，共{len(texts)}行。",
+                        messages=[
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.3
+                    )
+                    
+                    result = response.content[0].text.strip()
+                    
+                    # 改进的解析逻辑
+                    lines = result.split('\n')
+                    translated_lines = []
+                    for line in lines:
+                        cleaned = re.sub(r'^\d+[\.\)、]\s*', '', line).strip()
+                        translated_lines.append(cleaned)
+                    
+                    # 过滤开头和结尾的空行
+                    while translated_lines and not translated_lines[0]:
+                        translated_lines.pop(0)
+                    while translated_lines and not translated_lines[-1]:
+                        translated_lines.pop()
+                    
+                    # 确保结果行数匹配
+                    if len(translated_lines) < len(texts):
+                        config.logger.warning(f'Claude 翻译结果不足：期望 {len(texts)} 条，实际 {len(translated_lines)} 条')
+                        translated_lines += [''] * (len(texts) - len(translated_lines))
+                    elif len(translated_lines) > len(texts):
+                        config.logger.warning(f'Claude 翻译结果过多：期望 {len(texts)} 条，实际 {len(translated_lines)} 条')
+                        translated_lines = translated_lines[:len(texts)]
+                    
+                    # 验证结果完整性
+                    missing_count = sum(1 for t in translated_lines if not t or not t.strip())
+                    if missing_count == 0 or attempt == max_retries - 1:
+                        if missing_count > 0:
+                            config.logger.warning(f'Claude 翻译有 {missing_count} 条遗漏')
+                        return translated_lines
+                    else:
+                        config.logger.warning(f'第 {attempt + 1} 次翻译有 {missing_count} 条遗漏，重试中')
+                        
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        config.logger.error(f'Claude 翻译失败: {e}', exc_info=True)
+                        raise
+                    config.logger.warning(f'第 {attempt + 1} 次翻译失败，重试中: {e}')
             
-            for i, text in enumerate(texts, 1):
-                prompt += f"{text}\n"
-            
-            prompt += "\n请直接输出翻译结果，每行对应一条翻译，不要包含任何其他内容："
-            
-            # 调用 API
-            client = translator['client']
-            model = translator['model']
-            
-            try:
-                response = client.messages.create(
-                    model=model,
-                    max_tokens=4096,
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.3
-                )
-                
-                result = response.content[0].text.strip()
-                
-                # 解析结果
-                translated_lines = result.split('\n')
-                translated_lines = [line.strip() for line in translated_lines if line.strip()]
-                
-                # 确保结果行数匹配
-                if len(translated_lines) < len(texts):
-                    translated_lines += [''] * (len(texts) - len(translated_lines))
-                elif len(translated_lines) > len(texts):
-                    translated_lines = translated_lines[:len(texts)]
-                
-                return translated_lines
-                
-            except Exception as e:
-                config.logger.error(f'Claude 翻译失败: {e}', exc_info=True)
-                raise
+            return translated_lines
         
         def translate_with_gemini(self, translator, texts):
-            """使用 Gemini API 翻译"""
-            source_lang_name = self.get_language_name(self.source_lang)
-            target_lang_name = self.get_language_name(self.target_lang)
+            """使用 Gemini API 翻译（带重试机制）"""
+            import re
+            max_retries = 2
             
-            prompt = f"""你是一个专业的字幕翻译助手。请将以下字幕从{source_lang_name}翻译成{target_lang_name}。
+            for attempt in range(max_retries):
+                try:
+                    source_lang_name = self.get_language_name(self.source_lang)
+                    target_lang_name = self.get_language_name(self.target_lang)
+                    
+                    prompt = f"""你是专业字幕翻译助手。请将以下{len(texts)}条{source_lang_name}字幕翻译成{target_lang_name}。
 
-要求：
-1. 保持原有的行数和格式
-2. 翻译要准确、流畅、自然
-3. 保留专有名词的原文
-4. 每行翻译结果用换行符分隔
-5. 不要添加任何序号、注释或额外的说明
+⚠️ 关键要求：
+1. 必须翻译全部{len(texts)}条字幕，一条都不能遗漏
+2. 严格按照原文顺序输出，每行一条翻译
+3. 每条字幕都必须有对应的翻译，不能跳过
+4. 不要添加序号（如1. 2.）、注释或任何额外内容
+5. 翻译要准确、流畅、符合{target_lang_name}习惯
 
-待翻译的字幕（每行一条）：
+原文字幕（共{len(texts)}条）：
 """
+                    
+                    for i, text in enumerate(texts, 1):
+                        prompt += f"{text}\n"
+                    
+                    prompt += f"\n请直接输出{len(texts)}条翻译结果，每行一条，确保数量完全匹配："
+                    
+                    # 调用 API
+                    model = translator['model']
+                    
+                    response = model.generate_content(
+                        prompt,
+                        generation_config={
+                            'temperature': 0.3,
+                            'max_output_tokens': 4096,
+                        }
+                    )
+                    result = response.text.strip()
+                    
+                    # 改进的解析逻辑
+                    lines = result.split('\n')
+                    translated_lines = []
+                    for line in lines:
+                        cleaned = re.sub(r'^\d+[\.\)、]\s*', '', line).strip()
+                        translated_lines.append(cleaned)
+                    
+                    # 过滤开头和结尾的空行
+                    while translated_lines and not translated_lines[0]:
+                        translated_lines.pop(0)
+                    while translated_lines and not translated_lines[-1]:
+                        translated_lines.pop()
+                    
+                    # 确保结果行数匹配
+                    if len(translated_lines) < len(texts):
+                        config.logger.warning(f'Gemini 翻译结果不足：期望 {len(texts)} 条，实际 {len(translated_lines)} 条')
+                        translated_lines += [''] * (len(texts) - len(translated_lines))
+                    elif len(translated_lines) > len(texts):
+                        config.logger.warning(f'Gemini 翻译结果过多：期望 {len(texts)} 条，实际 {len(translated_lines)} 条')
+                        translated_lines = translated_lines[:len(texts)]
+                    
+                    # 验证结果完整性
+                    missing_count = sum(1 for t in translated_lines if not t or not t.strip())
+                    if missing_count == 0 or attempt == max_retries - 1:
+                        if missing_count > 0:
+                            config.logger.warning(f'Gemini 翻译有 {missing_count} 条遗漏')
+                        return translated_lines
+                    else:
+                        config.logger.warning(f'第 {attempt + 1} 次翻译有 {missing_count} 条遗漏，重试中')
+                        
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        config.logger.error(f'Gemini 翻译失败: {e}', exc_info=True)
+                        raise
+                    config.logger.warning(f'第 {attempt + 1} 次翻译失败，重试中: {e}')
             
-            for i, text in enumerate(texts, 1):
-                prompt += f"{text}\n"
-            
-            prompt += "\n请直接输出翻译结果，每行对应一条翻译，不要包含任何其他内容："
-            
-            # 调用 API
-            model = translator['model']
-            
-            try:
-                response = model.generate_content(prompt)
-                result = response.text.strip()
-                
-                # 解析结果
-                translated_lines = result.split('\n')
-                translated_lines = [line.strip() for line in translated_lines if line.strip()]
-                
-                # 确保结果行数匹配
-                if len(translated_lines) < len(texts):
-                    translated_lines += [''] * (len(texts) - len(translated_lines))
-                elif len(translated_lines) > len(texts):
-                    translated_lines = translated_lines[:len(texts)]
-                
-                return translated_lines
-                
-            except Exception as e:
-                config.logger.error(f'Gemini 翻译失败: {e}', exc_info=True)
-                raise
+            return translated_lines
         
         def get_language_name(self, lang_code):
             """获取语言名称"""
