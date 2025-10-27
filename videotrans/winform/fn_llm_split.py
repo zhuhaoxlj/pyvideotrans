@@ -993,7 +993,7 @@ DO NOT include explanations, only return the JSON array."""
         # ==================== 解析和验证方法 ====================
         
         def _parse_llm_response(self, response, words):
-            """解析 LLM 返回的结果"""
+            """解析 LLM 返回的结果（增强版：支持缺失词的时间戳插值）"""
             import json
             import re
             
@@ -1022,39 +1022,174 @@ DO NOT include explanations, only return the JSON array."""
                 if not segment_text:
                     continue
                 
-                # 在词列表中查找这段文本
-                segment_words = []
-                search_text = segment_text.lower().replace(',', '').replace('.', '').replace('!', '').replace('?', '')
-                search_words = search_text.split()
+                # 使用增强的匹配策略
+                match_result = self._match_text_to_words(segment_text, words, word_idx)
                 
-                # 简单的词匹配策略
-                matched_words = []
-                temp_idx = word_idx
-                
-                for search_word in search_words:
-                    # 在当前位置附近查找匹配的词
-                    for offset in range(min(10, len(words) - temp_idx)):
-                        if temp_idx + offset >= len(words):
-                            break
-                        
-                        word_text = words[temp_idx + offset]['word'].lower().strip()
-                        word_clean = word_text.replace(',', '').replace('.', '').replace('!', '').replace('?', '').strip()
-                        
-                        if search_word in word_clean or word_clean in search_word:
-                            matched_words.append(words[temp_idx + offset])
-                            temp_idx = temp_idx + offset + 1
-                            break
-                
-                if matched_words:
+                if match_result:
                     subtitle = {
-                        'start': matched_words[0]['start'],
-                        'end': matched_words[-1]['end'],
+                        'start': match_result['start'],
+                        'end': match_result['end'],
                         'text': segment_text
                     }
                     subtitles.append(subtitle)
-                    word_idx = temp_idx
+                    word_idx = match_result['next_idx']
             
             return subtitles
+        
+        def _match_text_to_words(self, text, words, start_idx):
+            """
+            增强的文本到单词时间戳匹配算法
+            
+            支持：
+            1. 缺失词的处理（Whisper 未识别的词）
+            2. 时间戳插值估算
+            3. 更智能的序列对齐
+            """
+            import re
+            
+            # 清理和分词
+            text_clean = text.lower()
+            for punct in [',', '.', '!', '?', ';', ':', '"', "'", '(', ')', '[', ']']:
+                text_clean = text_clean.replace(punct, ' ')
+            text_words = [w for w in text_clean.split() if w]
+            
+            if not text_words:
+                return None
+            
+            # 使用动态规划进行序列对齐
+            matched_indices = []
+            text_idx = 0
+            word_idx = start_idx
+            max_lookahead = 15  # 增加前瞻范围
+            
+            while text_idx < len(text_words) and word_idx < len(words):
+                text_word = text_words[text_idx]
+                best_match = None
+                best_score = 0
+                best_offset = 0
+                
+                # 在当前位置附近查找最佳匹配
+                for offset in range(min(max_lookahead, len(words) - word_idx)):
+                    if word_idx + offset >= len(words):
+                        break
+                    
+                    word_data = words[word_idx + offset]
+                    word_text = word_data['word'].lower().strip()
+                    
+                    # 清理单词
+                    for punct in [',', '.', '!', '?', ';', ':', '"', "'", '(', ')', '[', ']']:
+                        word_text = word_text.replace(punct, '')
+                    word_text = word_text.strip()
+                    
+                    if not word_text:
+                        continue
+                    
+                    # 计算匹配分数
+                    score = self._calculate_match_score(text_word, word_text)
+                    
+                    # 考虑位置因素（越近越好）
+                    score = score - (offset * 0.1)
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_match = word_idx + offset
+                        best_offset = offset
+                
+                # 如果找到匹配（阈值：0.5）
+                if best_score > 0.5:
+                    matched_indices.append(best_match)
+                    word_idx = best_match + 1
+                    text_idx += 1
+                else:
+                    # 未找到匹配，可能是 Whisper 缺失的词
+                    # 跳过这个文本词，但不移动 word_idx
+                    text_idx += 1
+            
+            if not matched_indices:
+                return None
+            
+            # 获取匹配到的单词的时间戳
+            matched_words = [words[i] for i in matched_indices]
+            
+            # 计算起止时间（考虑缺失词的情况）
+            start_time = matched_words[0]['start']
+            end_time = matched_words[-1]['end']
+            
+            # 如果匹配率太低，尝试插值估算
+            match_ratio = len(matched_indices) / len(text_words)
+            if match_ratio < 0.5:
+                # 匹配率低于50%，可能有很多缺失词
+                # 使用更保守的时间范围估算
+                if len(matched_indices) >= 2:
+                    # 基于匹配词的密度估算总时长
+                    avg_word_duration = (end_time - start_time) / len(matched_indices)
+                    estimated_duration = avg_word_duration * len(text_words)
+                    
+                    # 调整结束时间
+                    end_time = start_time + estimated_duration
+                else:
+                    # 只有一个匹配词，使用默认估算
+                    avg_duration_per_word = 0.3  # 假设每词0.3秒
+                    end_time = start_time + (len(text_words) * avg_duration_per_word)
+            
+            return {
+                'start': start_time,
+                'end': end_time,
+                'next_idx': word_idx,
+                'match_ratio': match_ratio  # 用于调试
+            }
+        
+        def _calculate_match_score(self, text_word, whisper_word):
+            """
+            计算两个词的匹配分数
+            
+            返回值：0.0 - 1.0
+            """
+            if not text_word or not whisper_word:
+                return 0.0
+            
+            # 完全匹配
+            if text_word == whisper_word:
+                return 1.0
+            
+            # 一个包含另一个
+            if text_word in whisper_word or whisper_word in text_word:
+                shorter = min(len(text_word), len(whisper_word))
+                longer = max(len(text_word), len(whisper_word))
+                return shorter / longer * 0.9
+            
+            # 使用编辑距离
+            distance = self._levenshtein_distance(text_word, whisper_word)
+            max_len = max(len(text_word), len(whisper_word))
+            
+            if max_len == 0:
+                return 0.0
+            
+            similarity = 1.0 - (distance / max_len)
+            
+            # 只有相似度足够高才认为是匹配
+            return similarity if similarity > 0.6 else 0.0
+        
+        def _levenshtein_distance(self, s1, s2):
+            """计算编辑距离"""
+            if len(s1) < len(s2):
+                return self._levenshtein_distance(s2, s1)
+            
+            if len(s2) == 0:
+                return len(s1)
+            
+            previous_row = range(len(s2) + 1)
+            for i, c1 in enumerate(s1):
+                current_row = [i + 1]
+                for j, c2 in enumerate(s2):
+                    # j+1 instead of j since previous_row and current_row are one character longer than s2
+                    insertions = previous_row[j + 1] + 1
+                    deletions = current_row[j] + 1
+                    substitutions = previous_row[j] + (c1 != c2)
+                    current_row.append(min(insertions, deletions, substitutions))
+                previous_row = current_row
+            
+            return previous_row[-1]
         
         def _validate_and_adjust_timestamps(self, subtitles):
             """验证和调整时间戳"""
