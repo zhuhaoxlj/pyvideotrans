@@ -5,7 +5,7 @@ __all__ = [
     "ElevenlabsForm", "InfoForm", "AzureForm", "GeminiForm", "SetLineRole",
     "OttForm", "CloneForm", "SeparateForm", "TtsapiForm", "GPTSoVITSForm",
     "TransapiForm", "ArticleForm", "AzurettsForm", "ChatttsForm", "LocalLLMForm",
-    "ZijiehuoshanForm", "HebingsrtForm", "SplitSrtForm", "SmartSplitForm", "LLMSplitForm", "DoubaoForm", "FishTTSForm", "CosyVoiceForm",
+    "ZijiehuoshanForm", "HebingsrtForm", "SplitSrtForm", "SmartSplitForm", "LLMSplitForm", "LLMTranslateForm", "DoubaoForm", "FishTTSForm", "CosyVoiceForm",
     "AI302Form", "SetINIForm", "WatermarkForm", "GetaudioForm", "HunliuForm",
     "VASForm", "Fanyisrt", "Recognform", "Peiyinform", "Videoandaudioform",
     "Videoandsrtform", "OpenAITTSForm", "RecognAPIForm", "OpenaiRecognAPIForm",

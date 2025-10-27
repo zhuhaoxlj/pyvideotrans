@@ -55,6 +55,7 @@ from videotrans.ui.srthebing import Ui_srthebing
 from videotrans.ui.splitsrt import Ui_splitsrt
 from videotrans.ui.smartsplit import Ui_smartsplit
 from videotrans.ui.llmsplit import Ui_llmsplit
+from videotrans.ui.llmtrans import Ui_llmtrans
 from videotrans.ui.main_menu import Ui_MainMenu
 from videotrans.ui.stt import Ui_sttform
 from videotrans.ui.subtitlescover import Ui_subtitlescover
@@ -637,6 +638,13 @@ class FormatcoverForm(QDialog, Ui_formatcover):  # <===
 class SubtitlescoverForm(QDialog, Ui_subtitlescover):  # <===
     def __init__(self, parent=None):
         super(SubtitlescoverForm, self).__init__(parent)
+        self.setupUi(self)
+        self.setWindowIcon(QIcon(f"{config.ROOT_DIR}/videotrans/styles/icon.ico"))
+
+
+class LLMTranslateForm(QtWidgets.QWidget, Ui_llmtrans):  # <===
+    def __init__(self, parent=None):
+        super(LLMTranslateForm, self).__init__(parent)
         self.setupUi(self)
         self.setWindowIcon(QIcon(f"{config.ROOT_DIR}/videotrans/styles/icon.ico"))
 

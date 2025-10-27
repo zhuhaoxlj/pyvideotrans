@@ -1412,13 +1412,25 @@ DO NOT include explanations, only return the JSON array."""
         winobj.words_label.setVisible(not is_checked)
     
     def save_api_key_to_env():
-        """保存 API Key 到 .env 文件"""
+        """保存 API Key 到 .env 文件，支持多个提供商"""
         import os
         api_key = winobj.llm_api_key_input.text().strip()
         if not api_key:
             return
         
+        provider = winobj.llm_provider_combo.currentText().lower()
         env_file = os.path.join(config.ROOT_DIR, '.env')
+        
+        # 根据提供商确定环境变量名称
+        env_key_map = {
+            'openai': 'OPENAI_API_KEY',
+            'anthropic': 'ANTHROPIC_API_KEY',
+            'gemini': 'GEMINI_API_KEY',
+            'deepseek': 'DEEPSEEK_API_KEY',
+            'siliconflow': 'SILICONFLOW_API_KEY',
+            'local': 'LOCAL_LLM_API_KEY'
+        }
+        env_key_name = env_key_map.get(provider, 'SILICONFLOW_API_KEY')
         
         # 读取现有的 .env 文件内容
         lines = []
@@ -1429,10 +1441,10 @@ DO NOT include explanations, only return the JSON array."""
                 with open(env_file, 'r', encoding='utf-8') as f:
                     lines = f.readlines()
                 
-                # 查找并更新 SILICONFLOW_API_KEY
+                # 查找并更新对应的 API Key
                 for i, line in enumerate(lines):
-                    if line.strip().startswith('SILICONFLOW_API_KEY='):
-                        lines[i] = f'SILICONFLOW_API_KEY={api_key}\n'
+                    if line.strip().startswith(f'{env_key_name}='):
+                        lines[i] = f'{env_key_name}={api_key}\n'
                         key_exists = True
                         break
             except Exception as e:
@@ -1442,7 +1454,7 @@ DO NOT include explanations, only return the JSON array."""
         if not key_exists:
             if lines and not lines[-1].endswith('\n'):
                 lines.append('\n')
-            lines.append(f'SILICONFLOW_API_KEY={api_key}\n')
+            lines.append(f'{env_key_name}={api_key}\n')
         
         # 写回文件
         try:
@@ -1451,6 +1463,68 @@ DO NOT include explanations, only return the JSON array."""
             print(f"API Key 已保存到 {env_file}")
         except Exception as e:
             print(f"保存 API Key 失败: {e}")
+    
+    def save_llm_config():
+        """保存 LLM 配置到 config.params，与字幕翻译共享"""
+        provider = winobj.llm_provider_combo.currentText().lower()
+        model = winobj.llm_model_combo.currentText()
+        base_url = winobj.llm_base_url_input.text().strip()
+        
+        # 保存到 config.params
+        config.params['llm_provider'] = provider
+        config.params['llm_model'] = model
+        config.params['llm_base_url'] = base_url
+        config.getset_params(config.params)
+    
+    def load_api_key_from_env():
+        """从 .env 文件加载 API Key，根据当前选择的提供商"""
+        import os
+        provider = winobj.llm_provider_combo.currentText().lower()
+        
+        # 根据提供商确定环境变量名称
+        env_key_map = {
+            'openai': 'OPENAI_API_KEY',
+            'anthropic': 'ANTHROPIC_API_KEY',
+            'gemini': 'GEMINI_API_KEY',
+            'deepseek': 'DEEPSEEK_API_KEY',
+            'siliconflow': 'SILICONFLOW_API_KEY',
+            'local': 'LOCAL_LLM_API_KEY'
+        }
+        env_key_name = env_key_map.get(provider, 'SILICONFLOW_API_KEY')
+        
+        api_key = ""
+        # 首先尝试从环境变量读取
+        api_key = os.environ.get(env_key_name, '')
+        
+        # 如果环境变量没有，尝试从 .env 文件读取
+        if not api_key:
+            env_file = os.path.join(config.ROOT_DIR, '.env')
+            if os.path.exists(env_file):
+                try:
+                    with open(env_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                if '=' in line:
+                                    key, value = line.split('=', 1)
+                                    key = key.strip()
+                                    value = value.strip().strip('"').strip("'")
+                                    if key == env_key_name:
+                                        api_key = value
+                                        break
+                except Exception as e:
+                    print(f"读取 .env 文件失败: {e}")
+        
+        # 设置到输入框
+        if api_key:
+            winobj.llm_api_key_input.setText(api_key)
+    
+    def provider_changed_callback():
+        """提供商改变时的回调"""
+        # 加载对应提供商的 API Key
+        load_api_key_from_env()
+        # 保存配置
+        save_llm_config()
     
     class TestLLMThread(QThread):
         """异步测试LLM连接的线程"""
@@ -1850,40 +1924,40 @@ DO NOT include explanations, only return the JSON array."""
         # 监听 API Key 输入变化，自动保存到 .env 文件
         winobj.llm_api_key_input.textChanged.connect(save_api_key_to_env)
         
+        # 监听提供商变化
+        winobj.llm_provider_combo.currentTextChanged.connect(provider_changed_callback)
+        
+        # 监听模型和 Base URL 变化，保存配置
+        winobj.llm_model_combo.currentTextChanged.connect(save_llm_config)
+        winobj.llm_base_url_input.textChanged.connect(save_llm_config)
+        
         # 初始化时根据默认状态显示/隐藏控件
         toggle_llm_settings()
         toggle_srt_input()
         
+        # 从 config.params 加载保存的配置
+        saved_provider = config.params.get('llm_provider', 'siliconflow')
+        # 查找对应的提供商并设置
+        for i in range(winobj.llm_provider_combo.count()):
+            if winobj.llm_provider_combo.itemText(i).lower() == saved_provider:
+                winobj.llm_provider_combo.setCurrentIndex(i)
+                break
+        
         # 从环境变量或配置文件读取 API Key
-        import os
-        api_key = ""
-        # 首先尝试从环境变量读取
-        api_key = os.environ.get('SILICONFLOW_API_KEY', '')
-        # 如果环境变量没有，尝试从 .env 文件读取
-        if not api_key:
-            env_file = os.path.join(config.ROOT_DIR, '.env')
-            if os.path.exists(env_file):
-                try:
-                    with open(env_file, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            line = line.strip()
-                            if line and not line.startswith('#'):
-                                if '=' in line:
-                                    key, value = line.split('=', 1)
-                                    key = key.strip()
-                                    value = value.strip().strip('"').strip("'")
-                                    if key == 'SILICONFLOW_API_KEY':
-                                        api_key = value
-                                        break
-                except Exception as e:
-                    print(f"读取 .env 文件失败: {e}")
+        load_api_key_from_env()
         
-        # 设置 API Key 到输入框
-        if api_key:
-            winobj.llm_api_key_input.setText(api_key)
+        # 加载保存的模型
+        saved_model = config.params.get('llm_model', 'deepseek-ai/DeepSeek-V3.1-Terminus')
+        if saved_model:
+            # 如果模型不在列表中，添加进去
+            if winobj.llm_model_combo.findText(saved_model) == -1:
+                winobj.llm_model_combo.addItem(saved_model)
+            winobj.llm_model_combo.setCurrentText(saved_model)
         
-        # 设置默认模型为 DeepSeek-R1（在 UI 初始化后，提供商已经设置为 SiliconFlow）
-        winobj.llm_model_combo.setCurrentText("deepseek-ai/DeepSeek-R1")
+        # 加载保存的 Base URL
+        saved_base_url = config.params.get('llm_base_url', '')
+        if saved_base_url:
+            winobj.llm_base_url_input.setText(saved_base_url)
         
         # 让窗口在屏幕上居中显示
         from PySide6.QtGui import QGuiApplication

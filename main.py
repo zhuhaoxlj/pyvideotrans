@@ -91,13 +91,8 @@ def main():
     
     def open_ai_translate():
         """打开 AI 字幕翻译窗口"""
-        # TODO: 实现 AI 字幕翻译功能
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.information(
-            main_menu,
-            "提示" if config.defaulelang == 'zh' else "Notice",
-            "AI 字幕翻译功能即将推出！" if config.defaulelang == 'zh' else "AI Subtitle Translation coming soon!"
-        )
+        from videotrans.winform import fn_llm_translate
+        fn_llm_translate.openwin()
     
     def open_render_subtitle():
         """打开视频渲染字幕窗口"""
