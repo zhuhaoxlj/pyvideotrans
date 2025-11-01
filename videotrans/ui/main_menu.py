@@ -128,7 +128,7 @@ class Ui_MainMenu(object):
         # 添加视频帧率检测区域
         self.fps_frame = QFrame(self.centralwidget)
         self.fps_frame.setObjectName("fps_frame")
-        self.fps_frame.setMinimumHeight(140)
+        self.fps_frame.setMinimumHeight(160)
         self.fps_frame.setStyleSheet("""
             QFrame#fps_frame {
                 background-color: #37474f;
@@ -172,10 +172,11 @@ class Ui_MainMenu(object):
         self.fps_result_label.setObjectName("fps_result_label")
         self.fps_result_label.setAlignment(Qt.AlignCenter)
         fps_font = QFont()
-        fps_font.setPointSize(20)
+        fps_font.setPointSize(22)
         fps_font.setBold(True)
         self.fps_result_label.setFont(fps_font)
-        self.fps_result_label.setStyleSheet("QLabel { color: #ffffff; border: none; background: transparent; }")
+        self.fps_result_label.setStyleSheet("QLabel { color: #4caf50; border: none; background: transparent; }")
+        self.fps_result_label.setWordWrap(True)
         self.fps_result_label.hide()  # 初始隐藏
         fps_layout.addWidget(self.fps_result_label)
         

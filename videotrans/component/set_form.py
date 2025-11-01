@@ -1,7 +1,7 @@
 import PySide6
 import os
 from PySide6 import QtWidgets
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QDialog
 
@@ -660,7 +660,7 @@ class MainMenuForm(QtWidgets.QMainWindow, Ui_MainMenu):  # <===
         self.fps_frame.setAcceptDrops(True)
         
         # 设置鼠标悬停时的光标样式
-        self.fps_frame.setCursor(QtCore.Qt.PointingHandCursor)
+        self.fps_frame.setCursor(Qt.PointingHandCursor)
         
         # 为fps_frame安装事件过滤器以捕获鼠标点击
         self.fps_frame.mousePressEvent = self._on_fps_frame_clicked
@@ -751,10 +751,10 @@ class MainMenuForm(QtWidgets.QMainWindow, Ui_MainMenu):  # <===
             # 显示视频信息
             if config.defaulelang == 'zh':
                 info_text = f"文件: {file_name}\n分辨率: {width}x{height} | 编码: {codec} | 时长: {duration_str}"
-                fps_text = f"📊 视频帧率: {fps:.2f} FPS"
+                fps_text = f"帧率: {fps:.2f} FPS"
             else:
                 info_text = f"File: {file_name}\nResolution: {width}x{height} | Codec: {codec} | Duration: {duration_str}"
-                fps_text = f"📊 Video FPS: {fps:.2f} FPS"
+                fps_text = f"FPS: {fps:.2f}"
             
             self.video_info_label.setText(info_text)
             self.fps_result_label.setText(fps_text)
