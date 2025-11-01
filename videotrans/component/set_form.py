@@ -654,4 +654,122 @@ class MainMenuForm(QtWidgets.QMainWindow, Ui_MainMenu):  # <===
         super(MainMenuForm, self).__init__(parent)
         self.setupUi(self)
         self.setWindowIcon(QIcon(f"{config.ROOT_DIR}/videotrans/styles/icon.ico"))
+        
+        # 启用拖放功能
+        self.setAcceptDrops(True)
+        self.fps_frame.setAcceptDrops(True)
+        
+        # 设置鼠标悬停时的光标样式
+        self.fps_frame.setCursor(QtCore.Qt.PointingHandCursor)
+        
+        # 为fps_frame安装事件过滤器以捕获鼠标点击
+        self.fps_frame.mousePressEvent = self._on_fps_frame_clicked
+    
+    def _on_fps_frame_clicked(self, event):
+        """处理fps_frame的点击事件，打开文件选择对话框"""
+        from pathlib import Path
+        
+        # 打开文件选择对话框
+        file_dialog = QtWidgets.QFileDialog()
+        file_dialog.setWindowTitle("选择视频文件" if config.defaulelang == 'zh' else "Select Video File")
+        file_dialog.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        file_dialog.setNameFilter("视频文件 (*.mp4 *.avi *.mov *.mkv *.flv *.wmv *.webm *.m4v *.mpeg *.mpg)" if config.defaulelang == 'zh' else "Video Files (*.mp4 *.avi *.mov *.mkv *.flv *.wmv *.webm *.m4v *.mpeg *.mpg)")
+        
+        if file_dialog.exec():
+            selected_files = file_dialog.selectedFiles()
+            if selected_files:
+                file_path = selected_files[0]
+                if self._is_video_file(file_path):
+                    self._process_video_file(file_path)
+    
+    def dragEnterEvent(self, event):
+        """处理拖拽进入事件"""
+        if event.mimeData().hasUrls():
+            # 检查是否包含视频文件
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if self._is_video_file(file_path):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+    
+    def dropEvent(self, event):
+        """处理拖拽放下事件"""
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if self._is_video_file(file_path):
+                    self._process_video_file(file_path)
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+    
+    def _is_video_file(self, file_path: str) -> bool:
+        """检查文件是否是视频格式"""
+        from pathlib import Path
+        video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v', '.mpeg', '.mpg']
+        return Path(file_path).suffix.lower() in video_extensions
+    
+    def _process_video_file(self, file_path: str):
+        """处理视频文件并显示帧率信息"""
+        from pathlib import Path
+        from videotrans.util.help_ffmpeg import get_video_info
+        
+        try:
+            # 显示处理中的提示
+            if config.defaulelang == 'zh':
+                self.video_info_label.setText("正在分析视频...")
+            else:
+                self.video_info_label.setText("Analyzing video...")
+            
+            self.fps_result_label.hide()
+            
+            # 获取视频信息
+            video_info = get_video_info(file_path)
+            
+            # 提取视频信息
+            fps = video_info.get('video_fps', 0)
+            width = video_info.get('width', 0)
+            height = video_info.get('height', 0)
+            duration_ms = video_info.get('time', 0)
+            codec = video_info.get('video_codec_name', 'unknown')
+            
+            # 计算时长（转换为秒）
+            duration_sec = duration_ms / 1000 if duration_ms > 0 else 0
+            
+            # 格式化时长显示
+            if duration_sec >= 3600:
+                duration_str = f"{int(duration_sec // 3600)}h {int((duration_sec % 3600) // 60)}m {int(duration_sec % 60)}s"
+            elif duration_sec >= 60:
+                duration_str = f"{int(duration_sec // 60)}m {int(duration_sec % 60)}s"
+            else:
+                duration_str = f"{int(duration_sec)}s"
+            
+            # 获取文件名
+            file_name = Path(file_path).name
+            
+            # 显示视频信息
+            if config.defaulelang == 'zh':
+                info_text = f"文件: {file_name}\n分辨率: {width}x{height} | 编码: {codec} | 时长: {duration_str}"
+                fps_text = f"📊 视频帧率: {fps:.2f} FPS"
+            else:
+                info_text = f"File: {file_name}\nResolution: {width}x{height} | Codec: {codec} | Duration: {duration_str}"
+                fps_text = f"📊 Video FPS: {fps:.2f} FPS"
+            
+            self.video_info_label.setText(info_text)
+            self.fps_result_label.setText(fps_text)
+            self.fps_result_label.show()
+            
+        except Exception as e:
+            # 显示错误信息
+            error_msg = str(e)
+            if config.defaulelang == 'zh':
+                self.video_info_label.setText(f"❌ 分析失败: {error_msg}")
+                QtWidgets.QMessageBox.warning(self, "错误", f"无法分析视频文件:\n{error_msg}")
+            else:
+                self.video_info_label.setText(f"❌ Analysis failed: {error_msg}")
+                QtWidgets.QMessageBox.warning(self, "Error", f"Failed to analyze video:\n{error_msg}")
+            
+            self.fps_result_label.hide()
+            config.logger.error(f"Failed to process video file: {file_path}, error: {e}")
 
