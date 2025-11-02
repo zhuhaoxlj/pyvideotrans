@@ -23,10 +23,10 @@ class LLMProcessor(QThread):
     finished_signal = Signal(str)  # 完成信号，传递输出文件路径
     error = Signal(str)     # 错误信号
     
-    def __init__(self, video_file=None, srt_file=None, llm_provider='siliconflow',
-                 llm_api_key='', llm_model='deepseek-ai/DeepSeek-V3.1-Terminus', llm_base_url='',
-                 language='en', model_size='large-v3-turbo', max_duration=5.0,
-                 max_words=12, device='cpu', output_dir=None, models_dir=None, enable_cache=True):
+    def __init__(self, video_file=None, srt_file=None, llm_provider='siliconflow', 
+                 llm_api_key='', llm_model='Qwen/Qwen2.5-7B-Instruct', llm_base_url='',
+                 language='en', model_size='large-v3-turbo', max_duration=5.0, 
+                 max_words=15, device='cpu', output_dir=None, models_dir=None, enable_cache=True):
         """
         初始化 LLM 处理器
         
@@ -441,55 +441,25 @@ class LLMProcessor(QThread):
     # ========== LLM 分割方法 ==========
     
     def llm_split_simple(self, text):
-        """简单的 LLM 分割（用于仅SRT模式）- 成熟版，语义优先"""
-        prompt = f"""You are a professional subtitle editor following industry standards (BBC, Netflix, TED).
+        """简单的 LLM 分割（用于仅SRT模式）"""
+        prompt = f"""You are an expert subtitle editor. Split the following text into natural, readable subtitle segments.
 
 TEXT TO SPLIT:
 {text}
 
-PRINCIPLES (in order of importance):
-
-1. **SEMANTIC COMPLETENESS**: Each subtitle should express a complete thought
-   - Don't break in the middle of phrases or clauses
-   - Keep grammatical structures intact
-   - A subtitle should be understandable on its own
-
-2. **NATURAL BREAKING POINTS**: Split at logical pauses
-   - Priority 1: Sentence endings (periods, question marks)
-   - Priority 2: Major punctuation (commas, semicolons, dashes)
-   - Priority 3: Conjunctions (and, but, because, when, if)
-
-3. **READING COMFORT**:
-   - For English: typically 6-12 words (flexible!)
-   - Shorter (3-5 words) OK if complete
-   - Longer (up to 15 words) OK if indivisible
-   - Reading time: 1-2 seconds per subtitle
-
-4. **NATURAL VARIETY**: Don't make every subtitle the same length
-
-EXAMPLES:
-
-❌ BAD (breaks meaning):
-1. "One of my earliest memories is"
-2. "of trying to wake up"
-3. "one of my relatives"
-
-✅ GOOD (preserves meaning):
-1. "One of my earliest memories"
-2. "is of trying to wake up one of my relatives"
-
-OR:
-1. "One of my earliest memories is of trying to wake up one of my relatives"
+REQUIREMENTS:
+1. Each segment should be 3-6 seconds when spoken (approximately 10-15 words)
+2. Split at natural phrase boundaries
+3. Maintain semantic completeness
+4. Consider reading speed and viewer comprehension
 
 OUTPUT FORMAT:
 Return ONLY a JSON array. Each element should be a string (the subtitle text).
 
 Example:
-["First complete thought here", "Second complete thought", "Third one"]
+["First subtitle segment here", "Second subtitle segment here", "Third subtitle segment"]
 
-DO NOT include explanations, only return the JSON array.
-
-REMEMBER: Semantic completeness is MORE important than exact word counts. Use intelligence, not rigid rules."""
+DO NOT include explanations, only return the JSON array."""
         
         try:
             self.progress.emit("   📡 正在调用 LLM API...")
@@ -535,7 +505,7 @@ REMEMBER: Semantic completeness is MORE important than exact word counts. Use in
         start_time = time.time()
         try:
             self.progress.emit('   📡 LLM 响应流:')
-            response = self._call_llm_stream(prompt, reference_text)
+            response = self._call_llm_stream(prompt)
             llm_time = time.time() - start_time
             self.progress.emit(f'\n   ✅ LLM响应完成 (耗时: {llm_time:.1f}秒)')
         except Exception as e:
@@ -562,7 +532,7 @@ REMEMBER: Semantic completeness is MORE important than exact word counts. Use in
         return subtitles
     
     def _build_llm_prompt(self, text, word_count, language):
-        """构建 LLM prompt - 成熟版，平衡语义完整性和可读性"""
+        """构建 LLM prompt"""
         lang_name = {
             'en': 'English',
             'zh': 'Chinese',
@@ -573,115 +543,53 @@ REMEMBER: Semantic completeness is MORE important than exact word counts. Use in
             'de': 'German',
             'ru': 'Russian'
         }.get(language, 'English')
-
-        prompt = f"""You are a professional subtitle editor following industry standards (BBC, Netflix, TED).
+        
+        prompt = f"""You are an expert subtitle editor. Your task is to split the following {lang_name} text into natural, readable subtitle segments.
 
 TEXT TO SPLIT:
 {text}
 
-PRINCIPLES (in order of importance):
+REQUIREMENTS:
+1. Each subtitle should be 3-6 seconds when spoken (approximately {int(self.max_words * 0.7)}-{self.max_words} words)
+2. Split at natural phrase boundaries (not in the middle of phrases)
+3. Maintain semantic completeness (don't split incomplete thoughts)
+4. Consider reading speed and viewer comprehension
+5. Prioritize natural pauses in speech
+6. Keep related concepts together (e.g., "a beautiful day" should not be split)
 
-1. **SEMANTIC COMPLETENESS**: Each subtitle should express a complete thought
-   - Don't break in the middle of a phrase or clause
-   - Keep subject-verb-object together when possible
-   - Preserve grammatical structures
-   - A subtitle should be understandable on its own
-
-2. **NATURAL BREAKING POINTS**: Split at logical pauses in speech
-   - Priority 1: Sentence endings (periods, question marks, exclamation marks)
-   - Priority 2: Major punctuation (commas, semicolons, dashes, colons)
-   - Priority 3: Conjunctions (and, but, because, when, if, so)
-   - NEVER: Middle of noun phrases, verb phrases, or prepositional phrases
-
-3. **READING COMFORT**: Balance brevity with comprehension
-   - For English: typically 6-12 words per subtitle (flexible based on context!)
-   - For Chinese: typically 12-20 characters per subtitle
-   - Shorter (3-5 words) is OK if semantically complete
-   - Longer (up to 15 words) is OK if the thought is indivisible
-   - Reading time: 1-2 seconds per subtitle is ideal
-
-4. **NATURAL VARIETY**: Mix short and medium-length subtitles
-   - Don't make every subtitle exactly the same length
-   - Follow the natural rhythm and pacing of speech
-   - Some ideas are brief, some need more words - that's OK!
-
-EXAMPLES OF GOOD SPLITTING:
-
-❌ BAD (breaks semantic units):
-1. "One of my earliest memories is"
-2. "of trying to wake up"
-3. "one of my relatives and"
-4. "not being able to."
-
-✅ GOOD (preserves meaning):
-1. "One of my earliest memories"
-2. "is of trying to wake up one of my relatives"
-3. "and not being able to."
-
----
-
-❌ BAD (too mechanical):
-1. "And I've been thinking about"
-2. "it a lot lately, partly"
-3. "because it's now exactly 100"
-4. "years since drugs were first"
-5. "banned in the United States"
-
-✅ GOOD (semantic and natural):
-1. "And I've been thinking about it a lot lately,"
-2. "partly because it's now exactly 100 years"
-3. "since drugs were first banned in the United States"
-
----
-
-❌ BAD (too long, hard to read):
-1. "And I've been thinking about it a lot lately, partly because it's now exactly 100 years since drugs were first banned in the United States and Britain"
-
-✅ ALSO GOOD (balanced approach):
-1. "And I've been thinking about it a lot lately,"
-2. "partly because it's now 100 years since drugs"
-3. "were first banned in the United States and Britain"
-
-The text has {word_count} words total. Create an appropriate number of subtitles based on semantic units, not a fixed word count.
+The text has {word_count} words total. Please split it into approximately {max(2, word_count // self.max_words)} segments.
 
 OUTPUT FORMAT:
-Return ONLY a JSON array. Each element should have:
+Return ONLY a JSON array of subtitle segments. Each segment should have:
 - "text": the subtitle text
-- "word_count": number of words
+- "word_count": approximate number of words
 
-Example:
+Example output:
 [
-  {{"text": "One of my earliest memories", "word_count": 5}},
-  {{"text": "is of trying to wake up one of my relatives", "word_count": 10}},
-  {{"text": "and not being able to.", "word_count": 5}}
+  {{"text": "Bringing people together these days is a feat.", "word_count": 8}},
+  {{"text": "Thousands of people coming joyfully together", "word_count": 6}},
+  {{"text": "to create a mile-long beautiful spectacle", "word_count": 7}}
 ]
 
-DO NOT include explanations. Return ONLY the JSON array.
-
-REMEMBER: Semantic completeness and natural speech rhythm are MORE important than hitting exact word counts. Use your intelligence to create subtitles that viewers can easily read and understand."""
+DO NOT include explanations, only return the JSON array."""
 
         return prompt
     
-    def _call_llm_stream(self, prompt, words_text):
-        """调用 LLM API（流式传输）- 严格按照主项目实现"""
-        import requests
-        import json
-        
-        if self.llm_provider == 'openai':
-            return self._stream_openai(prompt)
-        elif self.llm_provider == 'anthropic':
-            return self._stream_anthropic(prompt)
+    def _call_llm_stream(self, prompt):
+        """调用 LLM API（流式传输）"""
+        if self.llm_provider == 'siliconflow':
+            return self._call_siliconflow_stream(prompt)
+        elif self.llm_provider == 'openai':
+            return self._call_openai_stream(prompt)
+        elif self.llm_provider == 'claude':
+            return self._call_claude_stream(prompt)
         elif self.llm_provider == 'deepseek':
-            return self._stream_deepseek(prompt)
-        elif self.llm_provider == 'siliconflow':
-            return self._stream_siliconflow(prompt)
-        elif self.llm_provider == 'local':
-            return self._stream_local_llm(prompt)
+            return self._call_deepseek_stream(prompt)
         else:
-            raise ValueError(f'不支持的 LLM 提供商: {self.llm_provider}')
+            return self._call_siliconflow_stream(prompt)
     
-    def _stream_siliconflow(self, prompt):
-        """调用 SiliconFlow API (流式传输) - 严格按照主项目实现"""
+    def _call_siliconflow_stream(self, prompt):
+        """调用 SiliconFlow API（流式）"""
         import requests
         
         url = 'https://api.siliconflow.cn/v1/chat/completions'
@@ -726,8 +634,8 @@ REMEMBER: Semantic completeness and natural speech rhythm are MORE important tha
         
         return ''.join(full_content)
     
-    def _stream_openai(self, prompt):
-        """调用 OpenAI API (流式传输) - 严格按照主项目实现"""
+    def _call_openai_stream(self, prompt):
+        """调用 OpenAI API（流式）"""
         import requests
         
         url = self.llm_base_url if self.llm_base_url else 'https://api.openai.com/v1/chat/completions'
@@ -772,8 +680,8 @@ REMEMBER: Semantic completeness and natural speech rhythm are MORE important tha
         
         return ''.join(full_content)
     
-    def _stream_anthropic(self, prompt):
-        """调用 Anthropic Claude API (流式传输) - 严格按照主项目实现"""
+    def _call_claude_stream(self, prompt):
+        """调用 Claude API（流式）"""
         import requests
         
         url = 'https://api.anthropic.com/v1/messages'
@@ -815,8 +723,8 @@ REMEMBER: Semantic completeness and natural speech rhythm are MORE important tha
         
         return ''.join(full_content)
     
-    def _stream_deepseek(self, prompt):
-        """调用 DeepSeek API (流式传输) - 严格按照主项目实现"""
+    def _call_deepseek_stream(self, prompt):
+        """调用 DeepSeek API（流式）"""
         import requests
         
         url = 'https://api.deepseek.com/v1/chat/completions'
@@ -858,43 +766,6 @@ REMEMBER: Semantic completeness and natural speech rhythm are MORE important tha
                             self.stream.emit(content)
                 except json.JSONDecodeError:
                     continue
-        
-        return ''.join(full_content)
-    
-    def _stream_local_llm(self, prompt):
-        """调用本地 LLM (Ollama 等，流式传输) - 严格按照主项目实现"""
-        import requests
-        import json
-        
-        url = self.llm_base_url if self.llm_base_url else 'http://localhost:11434/api/generate'
-        
-        data = {
-            'model': self.llm_model,
-            'prompt': prompt,
-            'stream': True
-        }
-        
-        response = requests.post(url, json=data, stream=True, timeout=120)
-        response.raise_for_status()
-        
-        full_content = []
-        
-        for line in response.iter_lines():
-            if not line:
-                continue
-            
-            try:
-                chunk = json.loads(line)
-                if 'response' in chunk:
-                    content = chunk['response']
-                    if content:
-                        full_content.append(content)
-                        self.stream.emit(content)
-                
-                if chunk.get('done', False):
-                    break
-            except json.JSONDecodeError:
-                continue
         
         return ''.join(full_content)
     
@@ -988,171 +859,112 @@ REMEMBER: Semantic completeness and natural speech rhythm are MORE important tha
         return subtitles
     
     def _match_text_to_words(self, text, words, start_idx, relax=False):
-        """
-        增强的文本到单词时间戳匹配算法 - 修复版
-
-        支持：
-        1. 缺失词的处理（Whisper 未识别的词）
-        2. 时间戳插值估算
-        3. 更智能的序列对齐
-        4. ⭐ 时间戳连续性检查（修复时间跳跃问题）
-
+        """匹配文本到词级时间戳（增强版）
+        
         Args:
             text: 要匹配的文本
             words: 词级时间戳列表
             start_idx: 开始索引
             relax: 是否放宽匹配条件（用于尾部segments）
         """
-        import re
-
         # 清理和分词
         text_clean = text.lower()
         for punct in [',', '.', '!', '?', ';', ':', '"', "'", '(', ')', '[', ']']:
             text_clean = text_clean.replace(punct, ' ')
         text_words = [w for w in text_clean.split() if w]
-
+        
         if not text_words:
             return None
-
+        
         # 使用动态规划进行序列对齐
         matched_indices = []
         text_idx = 0
         word_idx = start_idx
-        max_lookahead = 10  # 减小前瞻范围，避免跨句匹配
-
+        max_lookahead = 20  # ✅ 增加前瞻范围
+        consecutive_misses = 0  # 连续未匹配计数
+        
         while text_idx < len(text_words) and word_idx < len(words):
             text_word = text_words[text_idx]
             best_match = None
             best_score = 0
-            best_offset = 0
-
+            
             # 在当前位置附近查找最佳匹配
             for offset in range(min(max_lookahead, len(words) - word_idx)):
                 if word_idx + offset >= len(words):
                     break
-
+                
                 word_data = words[word_idx + offset]
                 word_text = word_data['word'].lower().strip()
-
+                
                 # 清理单词
                 for punct in [',', '.', '!', '?', ';', ':', '"', "'", '(', ')', '[', ']']:
                     word_text = word_text.replace(punct, '')
                 word_text = word_text.strip()
-
+                
                 if not word_text:
                     continue
-
+                
                 # 计算匹配分数
                 score = self._calculate_match_score(text_word, word_text)
-
-                # 考虑位置因素（越近越好）
-                score = score - (offset * 0.15)  # 增加位置惩罚
-
-                # ⭐ 新增：时间戳连续性检查
-                if matched_indices and offset > 0:
-                    prev_match_idx = matched_indices[-1]
-                    prev_end_time = words[prev_match_idx]['end']
-                    current_start_time = word_data['start']
-                    time_gap = current_start_time - prev_end_time
-
-                    # 如果时间间隔过大（>1.5秒），降低分数
-                    if time_gap > 1.5:
-                        score -= 0.4
-
+                score = score - (offset * 0.05)  # ✅ 降低位置惩罚（从0.1到0.05）
+                
                 if score > best_score:
                     best_score = score
                     best_match = word_idx + offset
-                    best_offset = offset
-
-            # 如果找到匹配（阈值：0.6，提高阈值）
-            if best_score > 0.6:
+            
+            # ✅ 降低匹配阈值（从 0.5 到 0.3），更容易接受匹配
+            # 如果是放宽模式，进一步降低阈值
+            threshold = 0.2 if relax else 0.3
+            if best_score > threshold:
                 matched_indices.append(best_match)
                 word_idx = best_match + 1
                 text_idx += 1
+                consecutive_misses = 0
             else:
                 # 未找到匹配，可能是 Whisper 缺失的词
-                # 跳过这个文本词，但不移动 word_idx
                 text_idx += 1
-
-        if not matched_indices:
+                consecutive_misses += 1
+                
+                # ✅ 智能推进：连续多次未匹配时，适度推进 word_idx
+                if consecutive_misses >= 2:
+                    word_idx = min(word_idx + 1, len(words) - 1)
+                    consecutive_misses = 0
+        
+        # ✅ 放宽要求：只要匹配了至少1个词就返回结果
+        if len(matched_indices) < 1:
             return None
-
+        
         # 获取匹配到的单词的时间戳
         matched_words = [words[i] for i in matched_indices]
-
-        # ⭐ 核心改进：计算起止时间（带时间跳跃检测）
         start_time = matched_words[0]['start']
-        end_time = self._calculate_robust_end_time(matched_words, text_words)
-
-        # 如果匹配率太低，尝试插值估算
+        end_time = matched_words[-1]['end']
+        
+        # 🔧 时间戳插值估算（处理 Whisper 漏识别的词）
         match_ratio = len(matched_indices) / len(text_words)
-        if match_ratio < 0.6:
+        if match_ratio < 0.5:
+            # 匹配率低于50%，可能有很多缺失词
+            # 使用更保守的时间范围估算
             if len(matched_indices) >= 2:
                 # 基于匹配词的密度估算总时长
-                avg_word_duration = (matched_words[-1]['end'] - matched_words[0]['start']) / len(matched_indices)
+                avg_word_duration = (end_time - start_time) / len(matched_indices)
                 estimated_duration = avg_word_duration * len(text_words)
-
-                # 使用估算值和检测值中的较小者
-                end_time = min(end_time, start_time + estimated_duration)
+                
+                # 调整结束时间
+                end_time = start_time + estimated_duration
             else:
                 # 只有一个匹配词，使用默认估算
                 avg_duration_per_word = 0.3  # 假设每词0.3秒
                 end_time = start_time + (len(text_words) * avg_duration_per_word)
-
-        # ⭐ 边界检查：确保结束时间不会过度延伸
-        max_reasonable_duration = len(text_words) * 0.8  # 假设最快 1.25 词/秒
-        if (end_time - start_time) > max_reasonable_duration:
-            end_time = start_time + max_reasonable_duration
-
+        
         return {
             'start': start_time,
             'end': end_time,
             'next_idx': word_idx,
             'match_ratio': match_ratio  # 用于调试
         }
-
-    def _calculate_robust_end_time(self, matched_words, text_words):
-        """
-        计算稳健的结束时间（修复时间跳跃问题）
-
-        策略：
-        1. 检查匹配词之间的时间间隔
-        2. 如果发现大跳跃（>1.5秒），截断在跳跃之前
-        3. 否则使用最后一个匹配词的结束时间
-        """
-        if len(matched_words) == 1:
-            return matched_words[0]['end']
-
-        # 检查时间连续性
-        for i in range(len(matched_words) - 1):
-            current_end = matched_words[i]['end']
-            next_start = matched_words[i + 1]['start']
-            time_gap = next_start - current_end
-
-            # 如果发现大跳跃（>1.5秒），截断
-            if time_gap > 1.5:
-                # 截断在跳跃之前，并添加小缓冲
-                return current_end + 0.2
-
-        # 没有大跳跃，但仍需验证总时长是否合理
-        last_end = matched_words[-1]['end']
-        first_start = matched_words[0]['start']
-        total_duration = last_end - first_start
-
-        # 如果总时长过长（> 文本词数 * 1.0 秒），可能有问题
-        max_expected_duration = len(text_words) * 1.0
-        if total_duration > max_expected_duration and len(matched_words) > 1:
-            # 使用倒数第二个词的结束时间
-            return matched_words[-2]['end'] + 0.3
-
-        return last_end
     
     def _calculate_match_score(self, text_word, whisper_word):
-        """
-        计算两个词的匹配分数（严格按照主项目实现）
-        
-        返回值：0.0 - 1.0
-        """
+        """计算两个词的匹配分数（改进版：更智能的相似度判断）"""
         if not text_word or not whisper_word:
             return 0.0
         
@@ -1173,10 +985,30 @@ REMEMBER: Semantic completeness and natural speech rhythm are MORE important tha
         if max_len == 0:
             return 0.0
         
-        similarity = 1.0 - (distance / max_len)
+        # 计算基于编辑距离的相似度
+        edit_similarity = 1.0 - (distance / max_len)
         
-        # 只有相似度足够高才认为是匹配
-        return similarity if similarity > 0.6 else 0.0
+        # 使用 SequenceMatcher 计算序列相似度
+        seq_similarity = difflib.SequenceMatcher(None, text_word, whisper_word).ratio()
+        
+        # 取两者的最大值（更宽松的匹配策略）
+        final_similarity = max(edit_similarity, seq_similarity)
+        
+        # 🔧 关键改进：根据词长调整容忍度
+        if max_len <= 3:
+            # 短词：要求至少 50% 相似度
+            threshold = 0.5
+        elif max_len <= 6:
+            # 中等长度词：要求至少 40% 相似度
+            threshold = 0.4
+        else:
+            # 长词：要求至少 30% 相似度，并给予编辑距离优惠
+            threshold = 0.3
+            # 对于长词，如果编辑距离 <= 3，给予额外奖励
+            if distance <= 3:
+                final_similarity = max(final_similarity, 0.7)
+        
+        return final_similarity if final_similarity >= threshold else 0.0
     
     def _levenshtein_distance(self, s1, s2):
         """计算编辑距离"""
@@ -1199,62 +1031,43 @@ REMEMBER: Semantic completeness and natural speech rhythm are MORE important tha
         return previous_row[-1]
     
     def _validate_and_adjust_timestamps(self, subtitles):
-        """验证和调整时间戳 - 增强版"""
+        """验证和调整时间戳"""
         if not subtitles:
             return []
-
+        
         validated = []
-
+        
         for i, sub in enumerate(subtitles):
             # 确保时间戳合法
             if sub['start'] >= sub['end']:
                 sub['end'] = sub['start'] + 1.0
-
+            
             # 确保不与前一条重叠
             if i > 0 and sub['start'] < validated[-1]['end']:
-                # 添加小间隔（100ms）
-                sub['start'] = validated[-1]['end'] + 0.1
+                sub['start'] = validated[-1]['end'] + 0.01
                 if sub['start'] >= sub['end']:
                     sub['end'] = sub['start'] + 1.0
-
-            # ⭐ 新增：基于词数的智能持续时间检查
+            
+            # 检查持续时间是否合理
             duration = sub['end'] - sub['start']
-            word_count = len(sub['text'].split())
-
-            # 正常说话速度：2-4 词/秒（英文）
-            min_expected_duration = word_count * 0.25  # 最快 4 词/秒
-            max_expected_duration = word_count * 1.0   # 最慢 1 词/秒
-
-            if duration > max_expected_duration and word_count > 0:
-                self.progress.emit(
-                    f'   ⚠️  字幕 {i+1} 时长过长 ({duration:.2f}s，{word_count}词)，'
-                    f'调整为 {max_expected_duration:.2f}s'
-                )
-                sub['end'] = sub['start'] + max_expected_duration
-            elif duration < min_expected_duration and word_count > 0:
-                # 只有在持续时间真的太短时才调整
-                if duration < 0.5:
-                    self.progress.emit(
-                        f'   ⚠️  字幕 {i+1} 时长过短 ({duration:.2f}s，{word_count}词)，'
-                        f'调整为 {max(min_expected_duration, 0.5):.2f}s'
-                    )
-                    sub['end'] = sub['start'] + max(min_expected_duration, 0.5)
-
+            if duration > self.max_duration * 2:
+                sub['end'] = sub['start'] + self.max_duration * 1.5
+            elif duration < 0.5:
+                sub['end'] = sub['start'] + 0.5
+            
             validated.append(sub)
-
+        
         return validated
     
     def fallback_split(self, words):
-        """回退到规则引擎断句（当LLM失败时）- 严格按照主项目实现"""
+        """规则引擎回退（当LLM失败时）"""
         self.progress.emit('   🔄 使用规则引擎断句...')
         
-        # 检查输入
         if not words or len(words) == 0:
             self.progress.emit('   ⚠️  词列表为空，无法断句')
             return []
         
         try:
-            # 使用简化的规则引擎
             subtitles = []
             current_words = []
             current_start = words[0]['start']

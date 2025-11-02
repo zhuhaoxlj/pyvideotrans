@@ -1,6 +1,6 @@
 """
 Whisper Processor - Handles audio processing and transcription
-使用 faster-whisper 实现，支持词级时间戳和缓存
+使用 OpenAI Whisper 实现，支持词级时间戳和缓存
 """
 
 from PySide6.QtCore import QObject, Signal
@@ -18,14 +18,14 @@ from utils.fcpxml_generator import generate_fcpxml
 from utils.paths import setup_whisper_cache, get_models_dir
 from utils.model_loader import format_bytes
 
-# ⭐ 在模块加载时就导入 faster_whisper，避免在 QThread 中导入导致崩溃
-print("🔧 预加载 faster_whisper（避免线程崩溃）...")
+# ⭐ 在模块加载时就导入 whisper，避免在 QThread 中导入导致崩溃
+print("🔧 预加载 whisper（避免线程崩溃）...")
 try:
-    from faster_whisper import WhisperModel
-    print("✅ faster_whisper 预加载成功")
+    import whisper
+    print("✅ whisper 预加载成功")
 except Exception as e:
-    print(f"❌ faster_whisper 预加载失败: {e}")
-    WhisperModel = None
+    print(f"❌ whisper 预加载失败: {e}")
+    whisper = None
 
 
 class WhisperProcessor(QObject):
@@ -99,20 +99,23 @@ class WhisperProcessor(QObject):
         
     def _get_best_device(self):
         """Detect and return the best available device for processing"""
-        # 直接返回 CPU，避免 torch 导入问题
-        # faster-whisper 在 CPU 上也很快，不需要 GPU
-        print("   检测设备：直接使用 CPU（避免 torch 兼容性问题）")
-        return "cpu"
-        
-        # 原来的代码（有 torch 兼容性问题）：
-        # try:
-        #     import torch
-        #     if torch.cuda.is_available():
-        #         return "cuda"
-        #     else:
-        #         return "cpu"
-        # except ImportError:
-        #     return "cpu"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                print("   检测设备：CUDA GPU 可用")
+                return "cuda"
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                # ⚠️ MPS 设备在词级时间戳模式下有兼容性问题（不支持 float64）
+                # 因此使用 CPU 以确保词级时间戳功能正常工作
+                print("   检测设备：Apple Silicon MPS 可用，但词级时间戳需要 CPU")
+                print("   📝 提示：使用 CPU 模式以支持词级时间戳")
+                return "cpu"
+            else:
+                print("   检测设备：使用 CPU")
+                return "cpu"
+        except ImportError:
+            print("   检测设备：torch 未安装，使用 CPU")
+            return "cpu"
         
     def process(self):
         """Main processing function"""
@@ -149,7 +152,7 @@ class WhisperProcessor(QObject):
             # Show model information
             print("发送模型信息到 UI...")
             self.output.emit("=" * 60 + "\n")
-            self.output.emit(f"🎯 Model: {model_display} (faster-whisper)\n")
+            self.output.emit(f"🎯 Model: {model_display} (OpenAI Whisper)\n")
             self.output.emit(f"📁 Models directory: {models_dir}\n")
             self.output.emit(f"💾 Cache directory: {self.cache_dir}\n")
             self.output.emit("=" * 60 + "\n\n")
@@ -160,66 +163,60 @@ class WhisperProcessor(QObject):
             self.output.emit("🖥️  Step 2: 检测计算设备...\n")
             print("调用 _get_best_device()...")
             device = self._get_best_device()
+            self.device = device  # 保存为实例变量
             print(f"✓ 检测到设备: {device}")
             self.output.emit(f"   ✓ 检测到设备: {device}\n\n")
             print("✓ Step 2 完成")
             
             print("\nStep 3: 加载模型...")
-            self.status.emit(f"Loading faster-whisper {model_display} model...")
-            self.output.emit(f"⚙️  Step 3: 加载 faster-whisper 模型...\n")
+            self.status.emit(f"Loading OpenAI Whisper {model_display} model...")
+            self.output.emit(f"⚙️  Step 3: 加载 OpenAI Whisper 模型...\n")
             self.output.emit(f"   模型: {model_display}\n")
             self.output.emit(f"   设备: {device}\n")
-            
-            # 根据设备选择计算类型
-            print("选择计算类型...")
-            if device == 'cuda':
-                compute_type = "float16"
-            else:
-                compute_type = "int8"
-            print(f"   compute_type: {compute_type}")
-            
-            self.output.emit(f"   计算类型: {compute_type}\n")
             self.output.emit("   正在加载...\n\n")
             
-            # Load faster-whisper model
+            # Load OpenAI Whisper model
             try:
-                print("检查 WhisperModel...")
-                self.output.emit("   📥 使用预加载的 faster_whisper...\n")
+                print("检查 whisper...")
+                self.output.emit("   📥 使用预加载的 whisper...\n")
                 
-                if WhisperModel is None:
-                    raise ImportError("WhisperModel 未能预加载")
+                if whisper is None:
+                    raise ImportError("whisper 未能预加载")
                 
-                print("✓ WhisperModel 可用")
-                self.output.emit("   ✓ WhisperModel 已就绪\n")
+                print("✓ whisper 可用")
+                self.output.emit("   ✓ whisper 已就绪\n")
                 
                 print(f"加载模型: {model_name}")
                 print(f"   device: {device}")
-                print(f"   compute_type: {compute_type}")
                 print(f"   download_root: {models_dir}")
                 
                 self.output.emit(f"   📥 加载模型 {model_name}...\n")
                 self.output.emit(f"   （首次加载需要下载，请耐心等待）\n")
                 
-                print("创建 WhisperModel 实例...")
-                self.model = WhisperModel(
-                    model_name,
-                    device=device,
-                    compute_type=compute_type,
-                    download_root=str(models_dir)
-                )
-                print("✓ WhisperModel 创建成功")
+                print("创建 Whisper 模型实例...")
+                # OpenAI Whisper loads model to the specified device
+                self.model = whisper.load_model(model_name, device=device, download_root=str(models_dir))
+                print("✓ Whisper 模型创建成功")
                 
                 self.output.emit(f"\n✅ 模型加载成功！\n")
-                self.output.emit(f"   Device: {device}\n")
-                self.output.emit(f"   Compute type: {compute_type}\n\n")
+                self.output.emit(f"   Device: {device}\n\n")
                 
                 # Show device info
                 if device == "cuda":
                     self.output.emit("✓ Using NVIDIA GPU acceleration (CUDA)\n")
+                elif device == "mps":
+                    self.output.emit("✓ Using Apple Silicon GPU acceleration (MPS)\n")
                 else:
                     self.output.emit("ℹ Using CPU\n")
-                    if device == "cpu":
-                        self.output.emit("💡 Note: faster-whisper 在 CPU 上也很快！\n")
+                    # 检查是否是因为 MPS 限制而使用 CPU
+                    try:
+                        import torch
+                        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                            self.output.emit("📝 注意：Apple Silicon 检测到，但词级时间戳需要 CPU\n")
+                            self.output.emit("   原因：MPS 不支持 float64（DTW 算法需要）\n")
+                            self.output.emit("   性能：Apple Silicon CPU 依然很快！⚡\n")
+                    except:
+                        pass
                     
             except Exception as e:
                 import traceback
@@ -272,7 +269,7 @@ class WhisperProcessor(QObject):
                         self.error.emit(error_msg)
                         return
                     
-                    # 使用 faster-whisper 进行转录（获取词级时间戳）
+                    # 使用 OpenAI Whisper 进行转录（获取词级时间戳）
                     self.status.emit("Generating AI subtitles with word timestamps...")
                     self.output.emit("   Step 5.2: 开始语音识别（词级时间戳）\n")
                     self.output.emit("   ⏳ 此过程可能需要几分钟，请耐心等待...\n\n")
@@ -401,7 +398,7 @@ class WhisperProcessor(QObject):
         return segments
         
     def _transcribe_with_word_timestamps(self, audio_path):
-        """使用 faster-whisper 进行转录，获取词级时间戳"""
+        """使用 OpenAI Whisper 进行转录，获取词级时间戳"""
         try:
             language_code = self.data['language_code']
             
@@ -418,21 +415,19 @@ class WhisperProcessor(QObject):
                 self.output.emit(f"   初始提示: {initial_prompt}\n")
             self.output.emit("\n   开始转录...\n")
             
-            # 使用 faster-whisper 转录
-            segments, info = self.model.transcribe(
+            # 根据设备选择精度
+            device = getattr(self, 'device', 'cpu')
+            use_fp16 = (device == 'cuda')  # 仅在 CUDA 上使用 FP16
+            self.output.emit(f"   精度设置: {'FP16' if use_fp16 else 'FP32'}\n")
+            
+            # 使用 OpenAI Whisper 转录
+            result = self.model.transcribe(
                 audio_path,
                 language=language_code if language_code else None,
                 initial_prompt=initial_prompt,
                 word_timestamps=True,  # ⭐ 启用词级时间戳
-                beam_size=5,
-                vad_filter=True,
-                vad_parameters=dict(
-                    threshold=0.5,
-                    min_speech_duration_ms=250,
-                    max_speech_duration_s=float('inf'),
-                    min_silence_duration_ms=2000,
-                    speech_pad_ms=400
-                )
+                fp16=use_fp16,  # CPU 使用 FP32，CUDA 使用 FP16
+                verbose=False
             )
             
         except Exception as e:
@@ -447,22 +442,26 @@ class WhisperProcessor(QObject):
             
             self.output.emit("   开始收集词级时间戳...\n")
             
+            # OpenAI Whisper returns segments in result['segments']
+            segments = result.get('segments', [])
+            detected_language = result.get('language', language_code)
+            
             for segment in segments:
                 segment_count += 1
                 if segment_count % 10 == 0:
                     self.output.emit(f"   处理片段: {segment_count}...\n")
                 
                 # 收集文本
-                if segment.text:
-                    full_text.append(segment.text.strip())
+                if 'text' in segment:
+                    full_text.append(segment['text'].strip())
                 
                 # 收集词级时间戳
-                if hasattr(segment, 'words') and segment.words:
-                    for word in segment.words:
+                if 'words' in segment:
+                    for word in segment['words']:
                         all_words.append({
-                            'word': word.word,
-                            'start': word.start,
-                            'end': word.end
+                            'word': word.get('word', ''),
+                            'start': word.get('start', 0),
+                            'end': word.get('end', 0)
                         })
             
             self.output.emit(f"   收集完成：{segment_count} 个片段\n")
@@ -475,7 +474,7 @@ class WhisperProcessor(QObject):
                     preview += "..."
                 self.output.emit(f"   {preview}\n")
             
-            return all_words, info.language
+            return all_words, detected_language
             
         except Exception as e:
             self.output.emit(f"\n❌ 收集数据失败: {str(e)}\n")

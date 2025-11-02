@@ -418,8 +418,8 @@ class SplitView(QWidget):
         
         if provider == "SiliconFlow":
             self.model_combo.addItems([
-                "Qwen/Qwen2.5-7B-Instruct",
                 "deepseek-ai/DeepSeek-V3.1-Terminus",
+                "Qwen/Qwen2.5-7B-Instruct",
                 "Pro/Qwen/Qwen2.5-72B-Instruct",
                 "meta-llama/Meta-Llama-3.1-70B-Instruct"
             ])
