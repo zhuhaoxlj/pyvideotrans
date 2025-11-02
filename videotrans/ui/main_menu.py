@@ -50,6 +50,66 @@ class Ui_MainMenu(object):
         self.title_label.setStyleSheet("QLabel { color: #2196f3; margin-bottom: 20px; }")
         self.verticalLayout.addWidget(self.title_label)
         
+        # ============== 视频拖放区域（移到最上面） ==============
+        self.fps_frame = QFrame(self.centralwidget)
+        self.fps_frame.setObjectName("fps_frame")
+        self.fps_frame.setMinimumHeight(200)
+        self.fps_frame.setStyleSheet("""
+            QFrame#fps_frame {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #667eea, stop:1 #764ba2);
+                border: 3px dashed #ffffff;
+                border-radius: 15px;
+            }
+            QFrame#fps_frame:hover {
+                border-color: #4caf50;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #764ba2, stop:1 #667eea);
+            }
+        """)
+        
+        fps_layout = QVBoxLayout(self.fps_frame)
+        fps_layout.setSpacing(15)
+        fps_layout.setContentsMargins(30, 30, 30, 30)
+        
+        # 提示标签
+        self.fps_hint_label = QLabel(self.fps_frame)
+        self.fps_hint_label.setObjectName("fps_hint_label")
+        self.fps_hint_label.setAlignment(Qt.AlignCenter)
+        hint_font = QFont()
+        hint_font.setPointSize(20)
+        hint_font.setBold(True)
+        self.fps_hint_label.setFont(hint_font)
+        self.fps_hint_label.setStyleSheet("QLabel { color: #ffffff; border: none; background: transparent; }")
+        fps_layout.addWidget(self.fps_hint_label)
+        
+        # 视频信息标签
+        self.video_info_label = QLabel(self.fps_frame)
+        self.video_info_label.setObjectName("video_info_label")
+        self.video_info_label.setAlignment(Qt.AlignCenter)
+        info_font = QFont()
+        info_font.setPointSize(14)
+        self.video_info_label.setFont(info_font)
+        self.video_info_label.setStyleSheet("QLabel { color: #ffffff; border: none; background: transparent; }")
+        self.video_info_label.setWordWrap(True)
+        fps_layout.addWidget(self.video_info_label)
+        
+        # 处理状态标签
+        self.fps_result_label = QLabel(self.fps_frame)
+        self.fps_result_label.setObjectName("fps_result_label")
+        self.fps_result_label.setAlignment(Qt.AlignCenter)
+        fps_font = QFont()
+        fps_font.setPointSize(16)
+        fps_font.setBold(True)
+        self.fps_result_label.setFont(fps_font)
+        self.fps_result_label.setStyleSheet("QLabel { color: #4caf50; border: none; background: transparent; }")
+        self.fps_result_label.setWordWrap(True)
+        self.fps_result_label.hide()  # 初始隐藏
+        fps_layout.addWidget(self.fps_result_label)
+        
+        self.verticalLayout.addWidget(self.fps_frame)
+        # ============== 视频拖放区域结束 ==============
+        
         # 添加一些弹性空间
         self.verticalLayout.addStretch(1)
         
@@ -125,63 +185,6 @@ class Ui_MainMenu(object):
         """)
         self.verticalLayout.addWidget(self.btn_render_subtitle)
         
-        # 添加视频帧率检测区域
-        self.fps_frame = QFrame(self.centralwidget)
-        self.fps_frame.setObjectName("fps_frame")
-        self.fps_frame.setMinimumHeight(160)
-        self.fps_frame.setStyleSheet("""
-            QFrame#fps_frame {
-                background-color: #37474f;
-                border: 2px dashed #78909c;
-                border-radius: 10px;
-            }
-            QFrame#fps_frame:hover {
-                border-color: #90a4ae;
-                background-color: #455a64;
-            }
-        """)
-        
-        fps_layout = QVBoxLayout(self.fps_frame)
-        fps_layout.setSpacing(15)
-        fps_layout.setContentsMargins(25, 25, 25, 25)
-        
-        # 提示标签
-        self.fps_hint_label = QLabel(self.fps_frame)
-        self.fps_hint_label.setObjectName("fps_hint_label")
-        self.fps_hint_label.setAlignment(Qt.AlignCenter)
-        hint_font = QFont()
-        hint_font.setPointSize(16)
-        hint_font.setBold(True)
-        self.fps_hint_label.setFont(hint_font)
-        self.fps_hint_label.setStyleSheet("QLabel { color: #eceff1; border: none; background: transparent; }")
-        fps_layout.addWidget(self.fps_hint_label)
-        
-        # 视频信息标签
-        self.video_info_label = QLabel(self.fps_frame)
-        self.video_info_label.setObjectName("video_info_label")
-        self.video_info_label.setAlignment(Qt.AlignCenter)
-        info_font = QFont()
-        info_font.setPointSize(13)
-        self.video_info_label.setFont(info_font)
-        self.video_info_label.setStyleSheet("QLabel { color: #ffffff; border: none; background: transparent; }")
-        self.video_info_label.setWordWrap(True)
-        fps_layout.addWidget(self.video_info_label)
-        
-        # FPS显示标签
-        self.fps_result_label = QLabel(self.fps_frame)
-        self.fps_result_label.setObjectName("fps_result_label")
-        self.fps_result_label.setAlignment(Qt.AlignCenter)
-        fps_font = QFont()
-        fps_font.setPointSize(22)
-        fps_font.setBold(True)
-        self.fps_result_label.setFont(fps_font)
-        self.fps_result_label.setStyleSheet("QLabel { color: #4caf50; border: none; background: transparent; }")
-        self.fps_result_label.setWordWrap(True)
-        self.fps_result_label.hide()  # 初始隐藏
-        fps_layout.addWidget(self.fps_result_label)
-        
-        self.verticalLayout.addWidget(self.fps_frame)
-        
         # 添加弹性空间
         self.verticalLayout.addStretch(1)
         
@@ -200,18 +203,18 @@ class Ui_MainMenu(object):
         
         if config.defaulelang == 'zh':
             self.title_label.setText("🎬 PyVideoTrans 工具集")
+            self.fps_hint_label.setText("🎬 拖入视频开始智能生成字幕")
+            self.video_info_label.setText("支持 MP4、MOV、AVI、MKV 等视频格式")
             self.btn_llm_split.setText("🤖 AI智能分割字幕\n基于大语言模型的智能字幕断句")
             self.btn_ai_translate.setText("🌍 AI字幕翻译\n智能翻译字幕文件")
             self.btn_render_subtitle.setText("🎥 视频渲染字幕\n将字幕渲染到视频中")
-            self.fps_hint_label.setText("📹 点击或拖入视频文件检测帧率")
-            self.video_info_label.setText("支持 MP4、MOV、AVI、MKV 等视频格式")
             self.version_label.setText("版本 1.0.0 | 选择一个功能开始")
         else:
             self.title_label.setText("🎬 PyVideoTrans Tools")
+            self.fps_hint_label.setText("🎬 Drag Video Here to Generate Subtitles")
+            self.video_info_label.setText("Support MP4, MOV, AVI, MKV and other formats")
             self.btn_llm_split.setText("🤖 AI Smart Subtitle Split\nIntelligent subtitle segmentation based on LLM")
             self.btn_ai_translate.setText("🌍 AI Subtitle Translation\nIntelligent subtitle translation")
             self.btn_render_subtitle.setText("🎥 Render Subtitles to Video\nBurn subtitles into video")
-            self.fps_hint_label.setText("📹 Click or Drag Video to Detect FPS")
-            self.video_info_label.setText("Support MP4, MOV, AVI, MKV and other formats")
             self.version_label.setText("Version 1.0.0 | Choose a feature to start")
 

@@ -1,0 +1,9 @@
+PySide6>=6.6.0
+# openai-whisper>=20230314  # 已替换为 faster-whisper
+pydub>=0.25.1
+# torch>=2.0.0  # 可选依赖，用于 CUDA 检测
+# torchaudio>=2.0.0  # 不再需要
+numpy>=1.24.0
+faster-whisper>=0.10.0
+requests>=2.31.0
+

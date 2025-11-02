@@ -711,64 +711,90 @@ class MainMenuForm(QtWidgets.QMainWindow, Ui_MainMenu):  # <===
         return Path(file_path).suffix.lower() in video_extensions
     
     def _process_video_file(self, file_path: str):
-        """处理视频文件并显示帧率信息"""
+        """处理视频文件，调用字幕生成功能"""
+        import sys
         from pathlib import Path
-        from videotrans.util.help_ffmpeg import get_video_info
+        
+        # 添加 get_srt_zimu 到 Python 路径
+        get_srt_zimu_path = Path(config.ROOT_DIR) / "get_srt_zimu"
+        
+        # 如果不存在，尝试上一级目录
+        if not get_srt_zimu_path.exists():
+            get_srt_zimu_path = Path(config.ROOT_DIR).parent / "get_srt_zimu"
+        
+        if not get_srt_zimu_path.exists():
+            # 找不到模块，显示错误
+            error_msg = f"找不到字幕生成模块\n\n需要的路径:\n{get_srt_zimu_path}\n\n请确保 get_srt_zimu 项目在以下位置之一：\n1. {Path(config.ROOT_DIR) / 'get_srt_zimu'}\n2. {Path(config.ROOT_DIR).parent / 'get_srt_zimu'}"
+            if config.defaulelang == 'zh':
+                QtWidgets.QMessageBox.critical(self, "错误", error_msg)
+            else:
+                QtWidgets.QMessageBox.critical(self, "Error", f"Subtitle generation module not found\n\nRequired path:\n{get_srt_zimu_path}")
+            return
+        
+        # 添加到 sys.path
+        get_srt_zimu_str = str(get_srt_zimu_path)
+        if get_srt_zimu_str not in sys.path:
+            sys.path.insert(0, get_srt_zimu_str)
         
         try:
-            # 显示处理中的提示
+            # 导入字幕生成窗口
+            from ui.main_window import MainWindow
+            
+            # 隐藏当前主菜单窗口
+            self.hide()
+            
+            # 创建并显示字幕生成窗口
+            self.subtitle_window = MainWindow()
+            
+            # 设置窗口关闭时的回调
+            def on_subtitle_window_close():
+                # 重新显示主菜单
+                self.show()
+                # 重置UI状态
+                if config.defaulelang == 'zh':
+                    self.video_info_label.setText("支持 MP4、MOV、AVI、MKV 等视频格式")
+                else:
+                    self.video_info_label.setText("Support MP4, MOV, AVI, MKV and other formats")
+                self.fps_result_label.hide()
+            
+            # 连接关闭信号
+            self.subtitle_window.destroyed.connect(on_subtitle_window_close)
+            
+            # 显示字幕生成窗口
+            self.subtitle_window.show()
+            
+            # 如果有文件，预填充文件路径
+            if hasattr(self.subtitle_window, 'home_view'):
+                home_view = self.subtitle_window.home_view
+                # 使用 load_file 方法来加载文件（会自动检测帧率）
+                if hasattr(home_view, 'load_file'):
+                    home_view.load_file(file_path)
+            
+        except ImportError as e:
+            # 如果无法导入字幕生成模块，显示错误
+            error_msg = f"无法加载字幕生成模块:\n{str(e)}\n\n请确保 get_srt_zimu 项目在正确的位置:\n{get_srt_zimu_path}"
             if config.defaulelang == 'zh':
-                self.video_info_label.setText("正在分析视频...")
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "错误",
+                    error_msg
+                )
             else:
-                self.video_info_label.setText("Analyzing video...")
-            
-            self.fps_result_label.hide()
-            
-            # 获取视频信息
-            video_info = get_video_info(file_path)
-            
-            # 提取视频信息
-            fps = video_info.get('video_fps', 0)
-            width = video_info.get('width', 0)
-            height = video_info.get('height', 0)
-            duration_ms = video_info.get('time', 0)
-            codec = video_info.get('video_codec_name', 'unknown')
-            
-            # 计算时长（转换为秒）
-            duration_sec = duration_ms / 1000 if duration_ms > 0 else 0
-            
-            # 格式化时长显示
-            if duration_sec >= 3600:
-                duration_str = f"{int(duration_sec // 3600)}h {int((duration_sec % 3600) // 60)}m {int(duration_sec % 60)}s"
-            elif duration_sec >= 60:
-                duration_str = f"{int(duration_sec // 60)}m {int(duration_sec % 60)}s"
-            else:
-                duration_str = f"{int(duration_sec)}s"
-            
-            # 获取文件名
-            file_name = Path(file_path).name
-            
-            # 显示视频信息
-            if config.defaulelang == 'zh':
-                info_text = f"文件: {file_name}\n分辨率: {width}x{height} | 编码: {codec} | 时长: {duration_str}"
-                fps_text = f"帧率: {fps:.2f} FPS"
-            else:
-                info_text = f"File: {file_name}\nResolution: {width}x{height} | Codec: {codec} | Duration: {duration_str}"
-                fps_text = f"FPS: {fps:.2f}"
-            
-            self.video_info_label.setText(info_text)
-            self.fps_result_label.setText(fps_text)
-            self.fps_result_label.show()
-            
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"Failed to load subtitle generation module:\n{str(e)}\n\nPlease ensure get_srt_zimu is in the correct location:\n{get_srt_zimu_path}"
+                )
+            config.logger.error(f"Failed to import subtitle generation module: {e}")
         except Exception as e:
-            # 显示错误信息
+            # 其他错误
             error_msg = str(e)
             if config.defaulelang == 'zh':
-                self.video_info_label.setText(f"❌ 分析失败: {error_msg}")
-                QtWidgets.QMessageBox.warning(self, "错误", f"无法分析视频文件:\n{error_msg}")
+                self.video_info_label.setText(f"❌ 处理失败: {error_msg}")
+                QtWidgets.QMessageBox.warning(self, "错误", f"无法处理视频文件:\n{error_msg}")
             else:
-                self.video_info_label.setText(f"❌ Analysis failed: {error_msg}")
-                QtWidgets.QMessageBox.warning(self, "Error", f"Failed to analyze video:\n{error_msg}")
+                self.video_info_label.setText(f"❌ Processing failed: {error_msg}")
+                QtWidgets.QMessageBox.warning(self, "Error", f"Failed to process video:\n{error_msg}")
             
             self.fps_result_label.hide()
             config.logger.error(f"Failed to process video file: {file_path}, error: {e}")
