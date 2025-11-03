@@ -26,7 +26,8 @@ class LLMProcessor(QThread):
     def __init__(self, video_file=None, srt_file=None, llm_provider='siliconflow',
                  llm_api_key='', llm_model='deepseek-ai/DeepSeek-V3.1-Terminus', llm_base_url='',
                  language='en', model_size='large-v3-turbo', max_duration=5.0,
-                 max_words=12, device='cpu', output_dir=None, models_dir=None, enable_cache=True):
+                 max_words=12, device='cpu', output_dir=None, models_dir=None, enable_cache=True,
+                 enable_chunking=True, chunk_size=500, enable_strict_validation=True):
         """
         初始化 LLM 处理器
         
@@ -45,6 +46,9 @@ class LLMProcessor(QThread):
             output_dir: 输出目录
             models_dir: Whisper模型目录
             enable_cache: 是否启用词级时间戳缓存
+            enable_chunking: 是否启用分段处理（推荐性能一般的模型启用）
+            chunk_size: 每段的词数（默认500词）
+            enable_strict_validation: 是否启用严格文本验证（检测LLM是否修改了单词）
         """
         super().__init__()
         self.video_file = video_file
@@ -59,6 +63,9 @@ class LLMProcessor(QThread):
         self.max_words = max_words
         self.device = device
         self.enable_cache = enable_cache
+        self.enable_chunking = enable_chunking
+        self.chunk_size = chunk_size
+        self.enable_strict_validation = enable_strict_validation
         
         # 设置输出目录和文件
         if output_dir:
@@ -441,7 +448,21 @@ class LLMProcessor(QThread):
     # ========== LLM 分割方法 ==========
     
     def llm_split_simple(self, text):
-        """简单的 LLM 分割（用于仅SRT模式）- 成熟版，语义优先"""
+        """简单的 LLM 分割（用于仅SRT模式）- 支持分段处理和严格验证"""
+        
+        # 检查是否需要分段处理
+        word_count = len(text.split())
+        
+        if self.enable_chunking and word_count > self.chunk_size:
+            self.progress.emit(f"📊 文本较长 ({word_count} 词)，启用分段处理模式")
+            self.progress.emit(f"   分段大小: {self.chunk_size} 词/段")
+            return self._llm_split_chunked(text)
+        else:
+            self.progress.emit(f"📊 文本长度适中 ({word_count} 词)，使用单次处理")
+            return self._llm_split_single(text)
+    
+    def _llm_split_single(self, text):
+        """单次处理整个文本"""
         prompt = f"""You are a professional subtitle editor following industry standards (BBC, Netflix, TED).
 
 TEXT TO SPLIT:
@@ -467,6 +488,8 @@ PRINCIPLES (in order of importance):
 
 4. **NATURAL VARIETY**: Don't make every subtitle the same length
 
+⚠️ CRITICAL: DO NOT modify, correct, or rewrite any words. Keep the text EXACTLY as written.
+
 EXAMPLES:
 
 ❌ BAD (breaks meaning):
@@ -489,7 +512,9 @@ Example:
 
 DO NOT include explanations, only return the JSON array.
 
-REMEMBER: Semantic completeness is MORE important than exact word counts. Use intelligence, not rigid rules."""
+REMEMBER: 
+1. Copy text EXACTLY - do not fix grammar or spelling
+2. Semantic completeness is MORE important than exact word counts."""
         
         try:
             self.progress.emit("   📡 正在调用 LLM API...")
@@ -509,26 +534,168 @@ REMEMBER: Semantic completeness is MORE important than exact word counts. Use in
             
             # 解析响应
             segments = self._parse_simple_response(response)
+            
+            # 严格验证
+            if self.enable_strict_validation and segments:
+                segments = self._validate_text_integrity(text, segments)
+            
             return segments
             
         except Exception as e:
             self.progress.emit(f"\n   ❌ LLM 调用失败: {str(e)}") 
             raise
     
+    def _llm_split_chunked(self, text):
+        """分段处理长文本"""
+        # 按句子分割
+        sentences = self._split_into_sentences(text)
+        
+        if not sentences:
+            self.progress.emit("   ⚠️  无法分割句子，回退到单次处理")
+            return self._llm_split_single(text)
+        
+        self.progress.emit(f"   ✂️  分割为 {len(sentences)} 个句子")
+        
+        # 将句子组合成chunks
+        chunks = []
+        current_chunk = []
+        current_word_count = 0
+        
+        for sentence in sentences:
+            sentence_words = len(sentence.split())
+            
+            if current_word_count + sentence_words > self.chunk_size and current_chunk:
+                # 当前chunk已满，保存并开始新chunk
+                chunks.append(' '.join(current_chunk))
+                current_chunk = [sentence]
+                current_word_count = sentence_words
+            else:
+                current_chunk.append(sentence)
+                current_word_count += sentence_words
+        
+        # 添加最后一个chunk
+        if current_chunk:
+            chunks.append(' '.join(current_chunk))
+        
+        self.progress.emit(f"   📦 组合为 {len(chunks)} 个处理块")
+        
+        # 处理每个chunk
+        all_segments = []
+        for i, chunk in enumerate(chunks, 1):
+            self.progress.emit(f"\n   🔄 处理第 {i}/{len(chunks)} 块 ({len(chunk.split())} 词)...")
+            
+            try:
+                chunk_segments = self._llm_split_single(chunk)
+                if chunk_segments:
+                    all_segments.extend(chunk_segments)
+                    self.progress.emit(f"   ✅ 第 {i} 块完成，生成 {len(chunk_segments)} 个片段")
+                else:
+                    self.progress.emit(f"   ⚠️  第 {i} 块处理失败，跳过")
+            except Exception as e:
+                self.progress.emit(f"   ❌ 第 {i} 块错误: {str(e)}")
+                continue
+        
+        self.progress.emit(f"\n   ✅ 分段处理完成！共 {len(all_segments)} 个片段")
+        return all_segments
+    
+    def _split_into_sentences(self, text):
+        """将文本分割成句子"""
+        import re
+        
+        # 使用正则表达式按标点分割
+        # 保留标点符号
+        pattern = r'([.!?]+[\s]|[。！？]+)'
+        parts = re.split(pattern, text)
+        
+        sentences = []
+        current = ''
+        
+        for part in parts:
+            current += part
+            if re.match(pattern, part):
+                # 遇到句子结束符
+                sentences.append(current.strip())
+                current = ''
+        
+        # 添加剩余部分
+        if current.strip():
+            sentences.append(current.strip())
+        
+        return [s for s in sentences if s]
+    
+    def _validate_text_integrity(self, original_text, segments):
+        """验证LLM是否修改了原文"""
+        self.progress.emit("   🔍 验证文本完整性...")
+        
+        # 重建文本
+        reconstructed = ' '.join(segments)
+        
+        # 标准化比较（忽略多余空格和标点）
+        def normalize(text):
+            text = text.lower()
+            text = re.sub(r'\s+', ' ', text)
+            text = text.strip()
+            return text
+        
+        original_norm = normalize(original_text)
+        reconstructed_norm = normalize(reconstructed)
+        
+        # 计算相似度
+        similarity = difflib.SequenceMatcher(None, original_norm, reconstructed_norm).ratio()
+        
+        self.progress.emit(f"   📊 文本相似度: {similarity*100:.1f}%")
+        
+        if similarity < 0.95:
+            self.progress.emit("   ⚠️  警告: LLM 修改了部分单词！")
+            self.progress.emit(f"   原文长度: {len(original_text)} 字符")
+            self.progress.emit(f"   返回长度: {len(reconstructed)} 字符")
+            
+            # 显示差异
+            diff = difflib.unified_diff(
+                original_norm.split()[:20], 
+                reconstructed_norm.split()[:20],
+                lineterm='',
+                n=0
+            )
+            diff_lines = list(diff)[2:]  # 跳过头部
+            if diff_lines:
+                self.progress.emit("   差异示例（前20词）:")
+                for line in diff_lines[:5]:
+                    self.progress.emit(f"      {line}")
+            
+            # 询问是否继续
+            self.progress.emit("   💡 提示: 建议使用更好的模型或调整参数")
+        else:
+            self.progress.emit("   ✅ 文本完整性验证通过")
+        
+        return segments
+    
     def llm_smart_split(self, words, detected_language, original_text=None):
-        """使用 LLM 进行智能断句（基于词级时间戳）"""
+        """使用 LLM 进行智能断句（基于词级时间戳）- 支持分段处理"""
         if not words:
             return []
         
         # 如果有原始文本，使用原始文本；否则使用识别的文本
         reference_text = original_text if original_text else ''.join([w['word'] for w in words])
         
-        # 构建 prompt
-        prompt = self._build_llm_prompt(reference_text, len(words), detected_language)
-        
         self.progress.emit(f'   LLM提供商: {self.llm_provider}')
         self.progress.emit(f'   LLM模型: {self.llm_model}')
         self.progress.emit(f'   处理文本: {len(words)} 词')
+        
+        # 检查是否需要分段处理
+        if self.enable_chunking and len(words) > self.chunk_size:
+            self.progress.emit(f"📊 词数较多 ({len(words)} 词)，启用分段处理")
+            self.progress.emit(f"   分段大小: {self.chunk_size} 词/段")
+            return self._llm_smart_split_chunked(words, detected_language, reference_text)
+        else:
+            self.progress.emit(f"📊 词数适中 ({len(words)} 词)，使用单次处理")
+            return self._llm_smart_split_single(words, detected_language, reference_text)
+    
+    def _llm_smart_split_single(self, words, detected_language, reference_text):
+        """单次处理所有词"""
+        # 构建 prompt
+        prompt = self._build_llm_prompt(reference_text, len(words), detected_language)
+        
         self.progress.emit('   ⏳ 正在调用 LLM API，请稍候...')
         
         # 调用 LLM（支持流式传输）
@@ -553,11 +720,114 @@ REMEMBER: Semantic completeness is MORE important than exact word counts. Use in
         
         self.progress.emit(f'   ✅ 解析完成，生成 {len(subtitles)} 条字幕')
         
+        # 严格验证（检查是否修改了单词）
+        if self.enable_strict_validation:
+            subtitles = self._validate_subtitle_text_integrity(reference_text, subtitles)
+        
         # 验证和调整时间戳
         self.progress.emit('   🔧 验证和调整时间戳...')
         subtitles = self._validate_and_adjust_timestamps(subtitles)
         
         self.progress.emit('   ✅ 时间戳调整完成')
+        
+        return subtitles
+    
+    def _llm_smart_split_chunked(self, words, detected_language, reference_text):
+        """分段处理词级时间戳"""
+        # 将words分成多个chunks
+        chunks = []
+        current_chunk = []
+        
+        for i, word in enumerate(words):
+            current_chunk.append(word)
+            
+            if len(current_chunk) >= self.chunk_size:
+                chunks.append(current_chunk)
+                current_chunk = []
+        
+        # 添加剩余的词
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        self.progress.emit(f"   📦 分为 {len(chunks)} 个处理块")
+        
+        # 处理每个chunk
+        all_subtitles = []
+        
+        for i, chunk_words in enumerate(chunks, 1):
+            self.progress.emit(f"\n   🔄 处理第 {i}/{len(chunks)} 块 ({len(chunk_words)} 词)...")
+            
+            # 构建这个chunk的文本
+            chunk_text = ''.join([w['word'] for w in chunk_words])
+            
+            try:
+                chunk_subtitles = self._llm_smart_split_single(chunk_words, detected_language, chunk_text)
+                if chunk_subtitles:
+                    all_subtitles.extend(chunk_subtitles)
+                    self.progress.emit(f"   ✅ 第 {i} 块完成，生成 {len(chunk_subtitles)} 条字幕")
+                else:
+                    self.progress.emit(f"   ⚠️  第 {i} 块处理失败，使用规则引擎")
+                    fallback_subs = self.fallback_split(chunk_words)
+                    if fallback_subs:
+                        all_subtitles.extend(fallback_subs)
+            except Exception as e:
+                self.progress.emit(f"   ❌ 第 {i} 块错误: {str(e)}")
+                # 使用规则引擎作为后备
+                fallback_subs = self.fallback_split(chunk_words)
+                if fallback_subs:
+                    all_subtitles.extend(fallback_subs)
+        
+        self.progress.emit(f"\n   ✅ 分段处理完成！共 {len(all_subtitles)} 条字幕")
+        
+        # 最终验证和调整
+        self.progress.emit('   🔧 最终时间戳调整...')
+        all_subtitles = self._validate_and_adjust_timestamps(all_subtitles)
+        
+        return all_subtitles
+    
+    def _validate_subtitle_text_integrity(self, original_text, subtitles):
+        """验证字幕文本是否被LLM修改"""
+        self.progress.emit("   🔍 验证字幕文本完整性...")
+        
+        # 重建文本
+        reconstructed = ' '.join([sub['text'] for sub in subtitles])
+        
+        # 标准化比较
+        def normalize(text):
+            text = text.lower()
+            text = re.sub(r'\s+', ' ', text)
+            text = text.strip()
+            return text
+        
+        original_norm = normalize(original_text)
+        reconstructed_norm = normalize(reconstructed)
+        
+        # 计算相似度
+        similarity = difflib.SequenceMatcher(None, original_norm, reconstructed_norm).ratio()
+        
+        self.progress.emit(f"   📊 文本相似度: {similarity*100:.1f}%")
+        
+        if similarity < 0.90:
+            self.progress.emit("   ⚠️  警告: LLM 修改了部分单词！")
+            self.progress.emit(f"   原文长度: {len(original_text)} 字符")
+            self.progress.emit(f"   返回长度: {len(reconstructed)} 字符")
+            
+            # 显示差异示例
+            diff = difflib.unified_diff(
+                original_norm.split()[:30], 
+                reconstructed_norm.split()[:30],
+                lineterm='',
+                n=0
+            )
+            diff_lines = list(diff)[2:]
+            if diff_lines:
+                self.progress.emit("   差异示例（前30词）:")
+                for line in diff_lines[:8]:
+                    self.progress.emit(f"      {line}")
+            
+            self.progress.emit("   💡 提示: 考虑换用更好的模型或启用分段处理")
+        else:
+            self.progress.emit("   ✅ 文本完整性验证通过")
         
         return subtitles
     
@@ -574,91 +844,54 @@ REMEMBER: Semantic completeness is MORE important than exact word counts. Use in
             'ru': 'Russian'
         }.get(language, 'English')
 
-        prompt = f"""You are a professional subtitle editor following industry standards (BBC, Netflix, TED).
+        prompt = f"""You are a subtitle splitter. Your ONLY task is to split long text into shorter subtitle segments.
+
+⚠️ CRITICAL RULES (MUST FOLLOW):
+1. DO NOT modify, correct, or rewrite any words in the original text
+2. DO NOT fix grammar, spelling, or punctuation errors
+3. DO NOT rearrange or paraphrase the content
+4. ONLY split the text - keep every word exactly as it appears
 
 TEXT TO SPLIT:
 {text}
 
-PRINCIPLES (in order of importance):
+SPLITTING GUIDELINES:
 
-1. **SEMANTIC COMPLETENESS**: Each subtitle should express a complete thought
-   - Don't break in the middle of a phrase or clause
-   - Keep subject-verb-object together when possible
-   - Preserve grammatical structures
-   - A subtitle should be understandable on its own
+Target Length: ~10 words per subtitle (flexible: 7-13 words is fine)
 
-2. **NATURAL BREAKING POINTS**: Split at logical pauses in speech
-   - Priority 1: Sentence endings (periods, question marks, exclamation marks)
-   - Priority 2: Major punctuation (commas, semicolons, dashes, colons)
-   - Priority 3: Conjunctions (and, but, because, when, if, so)
-   - NEVER: Middle of noun phrases, verb phrases, or prepositional phrases
+Split Priority:
+1. At sentence endings (. ? ! )
+2. At major punctuation (, ; : — )
+3. At conjunctions (and, but, so, because, when, if)
+4. Keep complete phrases together (don't split subject-verb-object)
 
-3. **READING COMFORT**: Balance brevity with comprehension
-   - For English: typically 6-12 words per subtitle (flexible based on context!)
-   - For Chinese: typically 12-20 characters per subtitle
-   - Shorter (3-5 words) is OK if semantically complete
-   - Longer (up to 15 words) is OK if the thought is indivisible
-   - Reading time: 1-2 seconds per subtitle is ideal
+EXAMPLES:
 
-4. **NATURAL VARIETY**: Mix short and medium-length subtitles
-   - Don't make every subtitle exactly the same length
-   - Follow the natural rhythm and pacing of speech
-   - Some ideas are brief, some need more words - that's OK!
+❌ BAD - Breaks meaning:
+"One of my earliest memories is"
+"of trying to wake up"
 
-EXAMPLES OF GOOD SPLITTING:
+✅ GOOD - Complete thoughts:
+"One of my earliest memories"
+"is of trying to wake up one of my relatives"
 
-❌ BAD (breaks semantic units):
-1. "One of my earliest memories is"
-2. "of trying to wake up"
-3. "one of my relatives and"
-4. "not being able to."
+❌ BAD - Too mechanical:
+"And I've been thinking about"
+"it a lot lately, partly"
+"because it's now exactly 100"
 
-✅ GOOD (preserves meaning):
-1. "One of my earliest memories"
-2. "is of trying to wake up one of my relatives"
-3. "and not being able to."
+✅ GOOD - Natural splits:
+"And I've been thinking about it a lot lately,"
+"partly because it's now exactly 100 years"
+"since drugs were first banned"
 
----
-
-❌ BAD (too mechanical):
-1. "And I've been thinking about"
-2. "it a lot lately, partly"
-3. "because it's now exactly 100"
-4. "years since drugs were first"
-5. "banned in the United States"
-
-✅ GOOD (semantic and natural):
-1. "And I've been thinking about it a lot lately,"
-2. "partly because it's now exactly 100 years"
-3. "since drugs were first banned in the United States"
-
----
-
-❌ BAD (too long, hard to read):
-1. "And I've been thinking about it a lot lately, partly because it's now exactly 100 years since drugs were first banned in the United States and Britain"
-
-✅ ALSO GOOD (balanced approach):
-1. "And I've been thinking about it a lot lately,"
-2. "partly because it's now 100 years since drugs"
-3. "were first banned in the United States and Britain"
-
-The text has {word_count} words total. Create an appropriate number of subtitles based on semantic units, not a fixed word count.
-
-OUTPUT FORMAT:
-Return ONLY a JSON array. Each element should have:
-- "text": the subtitle text
-- "word_count": number of words
-
-Example:
+OUTPUT FORMAT (JSON only, no explanations):
 [
-  {{"text": "One of my earliest memories", "word_count": 5}},
-  {{"text": "is of trying to wake up one of my relatives", "word_count": 10}},
-  {{"text": "and not being able to.", "word_count": 5}}
+  {{"text": "exact text from original", "word_count": 5}},
+  {{"text": "next segment", "word_count": 10}}
 ]
 
-DO NOT include explanations. Return ONLY the JSON array.
-
-REMEMBER: Semantic completeness and natural speech rhythm are MORE important than hitting exact word counts. Use your intelligence to create subtitles that viewers can easily read and understand."""
+REMINDER: Copy the text EXACTLY as written. Do not change anything - just split it into readable segments."""
 
         return prompt
     
